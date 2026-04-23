@@ -99,6 +99,7 @@ Describe:
 1. Fermi-level proximity of Cu-d and S-p states.
 2. Any hybridization signatures induced by graphene/CuS coupling.
 3. Band dispersion changes versus isolated components.
+4. Element-resolved pDOS trends (C vs Cu vs S) from `pdos_elements_C_Cu_S.png`.
 
 **Placeholders**
 - Dominant states near \(E_F\): **[R8]**
@@ -117,6 +118,7 @@ For Pb²⁺ and Cd²⁺ (multiple sites if possible):
 Insert charge-density-difference maps and (if available) Bader charge table:
 - Net charge transfer graphene ↔ CuS: **[R14] e**
 - Net transfer adsorbate ↔ surface: **[R15] e**
+- Attach 3D cube (`charge_difference.cube`) and 2D mid-plane contour (`charge_contour_2d.png`).
 
 **Mechanism narrative template**: “Electron accumulation on [site] and depletion on [site] indicate [bonding type], consistent with [stronger/weaker] adsorption and observed DOS shifts near [energy window].”
 

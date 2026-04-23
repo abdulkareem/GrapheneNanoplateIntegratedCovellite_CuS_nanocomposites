@@ -148,16 +148,35 @@ def make_gpaw_calculator(
     txt: str = "gpaw.log",
     occupations_width: float = 0.1,
     mode_parallel: bool = False,
+    mode_type: str = "pw",
+    basis: str = "dzp",
 ) -> GPAW:
-    """Construct CPU-friendly GPAW calculator for Colab."""
+    """Construct CPU-friendly GPAW calculator for Colab.
+
+    Parameters
+    ----------
+    mode_type
+        "pw" for plane-wave mode, "lcao" for fast localized-orbital mode.
+    """
+    mode_type = mode_type.lower()
+    if mode_type == "pw":
+        mode_kw = {"mode": PW(ecut)}
+        extra_kw = {}
+    elif mode_type == "lcao":
+        mode_kw = {"mode": "lcao"}
+        extra_kw = {"basis": basis}
+    else:
+        raise ValueError(f"Unsupported mode_type={mode_type}. Use 'pw' or 'lcao'.")
+
     calc = GPAW(
-        mode=PW(ecut),
         xc=xc,
         kpts=kpts,
         occupations=FermiDirac(occupations_width),
         convergence={"energy": 1e-5},
         txt=txt,
         parallel={"domain": 1, "band": 1} if mode_parallel else {},
+        **mode_kw,
+        **extra_kw,
     )
     return calc
 

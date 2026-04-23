@@ -3,7 +3,7 @@
 ## 2-line Colab launcher (auto-runs everything from GitHub)
 ```python
 ![ -d GrapheneNanoplateIntegratedCovellite_CuS_nanocomposites ] || git clone https://github.com/<YOUR_GITHUB_USER>/GrapheneNanoplateIntegratedCovellite_CuS_nanocomposites.git
-!cd GrapheneNanoplateIntegratedCovellite_CuS_nanocomposites && git pull --ff-only || true; pip -q install ase gpaw gpaw-data numpy scipy matplotlib && python scripts/run_from_github.py --output-dir /content/results --profile publish --engine gpaw --adsorbate Pb2+
+!cd GrapheneNanoplateIntegratedCovellite_CuS_nanocomposites && git pull --ff-only || true; pip -q install ase gpaw gpaw-data numpy scipy matplotlib && python scripts/run_from_github.py --output-dir /content/results --profile quick --engine gpaw --adsorbate Pb2+
 ```
 
 ## Optional Quantum ESPRESSO backend
@@ -41,3 +41,34 @@ See `docs/data_code_sharing_recommendations.md` for what to publish publicly vs 
 If the repo already exists, the first line safely skips clone. To refresh, run `!cd GrapheneNanoplateIntegratedCovellite_CuS_nanocomposites && git pull`.
 
 The runner now auto-selects a compatible graphene/CuS supercell to avoid lattice-mismatch failures and logs the chosen supercells in `lattice_mismatch.txt`.
+
+
+## Colab speed defaults
+- `--profile quick` now uses **LCAO mode** for faster relaxations on Colab CPU.
+- `--profile publish` keeps PW accuracy, but uses an **LCAO pre-relax** before PW refinement.
+- Vacuum is reduced for quick profile to shrink FFT workload, and the runner now enforces compact z-cells and logs thickness/vacuum in `lattice_mismatch.txt`.
+
+## Vacuum sanity check (optional)
+If you want to verify your final z-height quickly:
+```python
+import numpy as np
+from ase.io import read
+atoms = read('/content/results/composite_relaxed.xyz')
+z = atoms.positions[:, 2]
+thickness = z.max() - z.min()
+cell_z = atoms.cell[2, 2]
+print(f'thickness={thickness:.2f} A, cell_z={cell_z:.2f} A, total_vacuum={cell_z-thickness:.2f} A')
+```
+
+## Publication post-processing (pDOS + charge-difference)
+After a successful run, generate manuscript-ready electronic figures:
+```python
+!cd GrapheneNanoplateIntegratedCovellite_CuS_nanocomposites && python scripts/postprocess_publication.py --output-dir /content/results --mode-type lcao --kpts "(3,3,1)" --ecut 420
+```
+This writes:
+- `pdos_elements_C_Cu_S.png`
+- `charge_difference.cube`
+- `charge_contour_2d.png`
+- `publication_results.md`
+
+> Note: the project generates results from your calculations; it does not fabricate publishable numbers.
