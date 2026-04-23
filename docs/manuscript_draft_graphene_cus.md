@@ -1,7 +1,7 @@
 # Manuscript Draft (Journal-Ready Template)
 
 **Working Title**  
-Interfacial Charge-Transfer Engineering in Graphene Nanoplate–Covellite CuS Heterostructures for Selective Pb²⁺/Cd²⁺ Capture: A Reproducible DFT Study with ASE+GPAW (and Optional Quantum ESPRESSO Cross-Validation)
+Interfacial Charge-Transfer Engineering in Graphene Nanoplate–Covellite CuS Heterostructures for Selective Pb²⁺/Cd²⁺ Capture: A Reproducible LCAO/PW Hybrid DFT Study with ASE+GPAW (and Optional Quantum ESPRESSO Cross-Validation)
 
 **Article Type**: Original Research Article  
 **Target Journals (suggested)**: *Applied Surface Science*, *Journal of Colloid and Interface Science*, *Chemical Engineering Journal*, *ACS Applied Materials & Interfaces*
@@ -37,6 +37,8 @@ In this work, we provide a reproducible DFT framework and manuscript-ready analy
 ### 2.1 Software and Reproducibility
 Calculations are performed with ASE orchestration and GPAW plane-wave DFT as the primary engine. Optional single-point cross-checks can be executed with Quantum ESPRESSO through ASE’s Espresso interface. The complete pipeline is distributed as executable scripts with metadata capture and convergence scans.
 
+To support commodity compute environments (e.g., Google Colab CPU), the workflow uses a two-tier strategy: rapid LCAO (DZP) settings for exploratory/initial relaxation and PW refinement for publication-level checks.
+
 ### 2.2 Model Construction
 - **Graphene nanoplate**: 4×4 (or 5×5 in publication profile) supercell with vacuum ≥ 15 Å.
 - **Covellite CuS slab**: hexagonal CuS bulk-derived (001) slab, typically 4–5 layers and vacuum ≥ 15 Å.
@@ -44,7 +46,8 @@ Calculations are performed with ASE orchestration and GPAW plane-wave DFT as the
 
 ### 2.3 DFT Settings (Primary GPAW)
 - Exchange-correlation: PBE-GGA.
-- Basis/mode: Plane waves, cutoff typically 450 eV (quick) and 520 eV (publication profile).
+- Basis/mode: LCAO (DZP) for quick profile; PW refinement for publication profile.
+- Typical cutoffs: 420 eV (quick/post checks) and 520 eV (publication PW profile).
 - k-mesh: 3×3×1 (quick) and 5×5×1 (publication profile).
 - Occupation smearing: Fermi–Dirac.
 - Electronic convergence target: ~1×10⁻⁵ eV.

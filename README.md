@@ -3,7 +3,7 @@
 ## 2-line Colab launcher (auto-runs everything from GitHub)
 ```python
 ![ -d GrapheneNanoplateIntegratedCovellite_CuS_nanocomposites ] || git clone https://github.com/<YOUR_GITHUB_USER>/GrapheneNanoplateIntegratedCovellite_CuS_nanocomposites.git
-!cd GrapheneNanoplateIntegratedCovellite_CuS_nanocomposites && git pull --ff-only || true; pip -q install ase gpaw gpaw-data mpi4py numpy scipy matplotlib && mpiexec -n 2 gpaw python scripts/run_from_github.py --output-dir /content/drive/MyDrive/gpaw_cus_graphene_project/results --profile quick --engine gpaw --adsorbate Pb2+
+!cd GrapheneNanoplateIntegratedCovellite_CuS_nanocomposites && git pull --ff-only || true; pip -q install ase gpaw gpaw-data mpi4py numpy scipy matplotlib && OMPI_ALLOW_RUN_AS_ROOT=1 OMPI_ALLOW_RUN_AS_ROOT_CONFIRM=1 mpiexec --allow-run-as-root -n 2 gpaw python scripts/run_from_github.py --output-dir /content/drive/MyDrive/gpaw_cus_graphene_project/results --profile quick --engine gpaw --adsorbate Pb2+
 ```
 
 ## Optional Quantum ESPRESSO backend
@@ -80,3 +80,9 @@ Before running commands, mount Drive:
 from google.colab import drive
 drive.mount('/content/drive')
 ```
+
+## MPI as root in Colab
+Colab runs as root, so MPI needs explicit root flags. The launcher already includes:
+- `OMPI_ALLOW_RUN_AS_ROOT=1`
+- `OMPI_ALLOW_RUN_AS_ROOT_CONFIRM=1`
+- `mpiexec --allow-run-as-root`
