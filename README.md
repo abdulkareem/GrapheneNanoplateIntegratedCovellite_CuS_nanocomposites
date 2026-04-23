@@ -31,3 +31,6 @@ See `docs/publishing_strategy.md` for novelty pivot recommendations and literatu
 
 ## Manuscript draft
 A complete paper draft template is provided at `docs/manuscript_draft_graphene_cus.md` for direct journal writing with placeholders for computed results.
+
+## Data/code sharing guidance
+See `docs/data_code_sharing_recommendations.md` for what to publish publicly vs archive externally (e.g., large `.gpw` files).

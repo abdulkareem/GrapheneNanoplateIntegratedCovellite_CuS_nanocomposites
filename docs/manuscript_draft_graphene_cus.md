@@ -134,13 +134,14 @@ This study delivers a reproducible and extensible first-principles workflow for 
 ---
 
 ## 5. Data and Code Availability
-All scripts, model-building tools, and plotting/export utilities are available in the associated GitHub repository. The generated output package should include:
+All scripts, model-building tools, and plotting/export utilities should be made public in the associated GitHub repository (preferably archived with a Zenodo DOI). The reproducibility package should include:
 - Structures (`.xyz`, `.traj`)
 - Energies (`energies.txt`, `paper_summary_metrics.csv`)
 - Electronic plots (`dos_total.png`, `pdos_cu_d.png`, `band_structure.png`)
 - Convergence artifacts (`convergence_scan.csv`, `convergence_scan.png`)
-- Restart/checkpoint files (`.gpw`)
 - Runtime metadata (`run_metadata.txt`)
+
+Large binary restart/checkpoint files (`.gpw`) and very large intermediate logs/trajectories may be hosted in an external data archive (Zenodo/Figshare/OSF) and referenced in the paper, or provided upon reasonable request.
 
 ---
 
