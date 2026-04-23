@@ -139,6 +139,7 @@ This study delivers a reproducible and extensible first-principles workflow for 
 All scripts, model-building tools, and plotting/export utilities should be made public in the associated GitHub repository (preferably archived with a Zenodo DOI). The reproducibility package should include:
 - Structures (`.xyz`, `.traj`)
 - Energies (`energies.txt`, `paper_summary_metrics.csv`)
+- Output index (`output_manifest.csv`)
 - Electronic plots (`dos_total.png`, `pdos_cu_d.png`, `band_structure.png`)
 - Convergence artifacts (`convergence_scan.csv`, `convergence_scan.png`)
 - Runtime metadata (`run_metadata.txt`)

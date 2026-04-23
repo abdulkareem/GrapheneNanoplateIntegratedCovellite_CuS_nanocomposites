@@ -3,7 +3,7 @@
 ## 2-line Colab launcher (auto-runs everything from GitHub)
 ```python
 ![ -d GrapheneNanoplateIntegratedCovellite_CuS_nanocomposites ] || git clone https://github.com/<YOUR_GITHUB_USER>/GrapheneNanoplateIntegratedCovellite_CuS_nanocomposites.git
-!cd GrapheneNanoplateIntegratedCovellite_CuS_nanocomposites && git pull --ff-only || true; pip -q install ase gpaw gpaw-data numpy scipy matplotlib && python scripts/run_from_github.py --output-dir /content/results --profile quick --engine gpaw --adsorbate Pb2+
+!cd GrapheneNanoplateIntegratedCovellite_CuS_nanocomposites && git pull --ff-only || true; pip -q install ase gpaw gpaw-data mpi4py numpy scipy matplotlib && mpiexec -n 2 gpaw python scripts/run_from_github.py --output-dir /content/drive/MyDrive/gpaw_cus_graphene_project/results --profile quick --engine gpaw --adsorbate Pb2+
 ```
 
 ## Optional Quantum ESPRESSO backend
@@ -63,12 +63,20 @@ print(f'thickness={thickness:.2f} A, cell_z={cell_z:.2f} A, total_vacuum={cell_z
 ## Publication post-processing (pDOS + charge-difference)
 After a successful run, generate manuscript-ready electronic figures:
 ```python
-!cd GrapheneNanoplateIntegratedCovellite_CuS_nanocomposites && python scripts/postprocess_publication.py --output-dir /content/results --mode-type lcao --kpts "(3,3,1)" --ecut 420
+!cd GrapheneNanoplateIntegratedCovellite_CuS_nanocomposites && python scripts/postprocess_publication.py --output-dir /content/drive/MyDrive/gpaw_cus_graphene_project/results --mode-type lcao --kpts "(3,3,1)" --ecut 420
 ```
 This writes:
 - `pdos_elements_C_Cu_S.png`
 - `charge_difference.cube`
 - `charge_contour_2d.png`
 - `publication_results.md`
+- `output_manifest.csv` (tables/images/figures/data index from the main run)
 
 > Note: the project generates results from your calculations; it does not fabricate publishable numbers.
+
+## Google Drive note (Colab)
+Before running commands, mount Drive:
+```python
+from google.colab import drive
+drive.mount('/content/drive')
+```

@@ -90,6 +90,38 @@ def detect_accelerator() -> str:
     return 'CPU-only'
 
 
+def write_output_manifest(out_dir: Path) -> Path:
+    """Create a CSV manifest of generated outputs (tables/images/data/checkpoints)."""
+    category_map = {
+        '.png': 'figure',
+        '.csv': 'table',
+        '.txt': 'text',
+        '.xyz': 'structure',
+        '.traj': 'trajectory',
+        '.gpw': 'checkpoint',
+        '.cube': 'charge_density',
+        '.md': 'report',
+        '.log': 'log',
+    }
+    rows = []
+    for p in sorted(out_dir.glob('*')):
+        if p.is_file():
+            ext = p.suffix.lower()
+            rows.append(
+                {
+                    'file': p.name,
+                    'category': category_map.get(ext, 'other'),
+                    'size_kb': round(p.stat().st_size / 1024.0, 2),
+                }
+            )
+    manifest = out_dir / 'output_manifest.csv'
+    with manifest.open('w', newline='', encoding='utf-8') as f:
+        writer = csv.DictWriter(f, fieldnames=['file', 'category', 'size_kb'])
+        writer.writeheader()
+        writer.writerows(rows)
+    return manifest
+
+
 def choose_profile(profile: str) -> Dict[str, object]:
     if profile == 'publish':
         return {
@@ -428,6 +460,7 @@ def run(output_dir: Path, graphene_n: int, spacing: float, adsorbate: str, profi
         writer.writerow(['kpts', run_cfg['kpts']])
         writer.writerow(['ecut_eV', run_cfg['ecut']])
 
+    write_output_manifest(output_dir)
     print('Done. Results in:', output_dir)
 
 
