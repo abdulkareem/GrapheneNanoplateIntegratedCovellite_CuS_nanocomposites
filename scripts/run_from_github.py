@@ -101,7 +101,10 @@ def choose_profile(profile: str) -> Dict[str, object]:
             'dos_width': 0.10,
             'mode_type': 'pw',
             'pre_relax_lcao': True,
-            'vacuum': 14.0,
+            'vacuum': 10.0,
+            'layers': 3,
+            'total_vacuum': 20.0,
+            'max_cell_z': 60.0,
         }
     return {
         'kpts': (3, 3, 1),
@@ -112,7 +115,10 @@ def choose_profile(profile: str) -> Dict[str, object]:
         'dos_width': 0.18,
         'mode_type': 'lcao',
         'pre_relax_lcao': False,
-        'vacuum': 10.0,
+        'vacuum': 7.5,
+        'layers': 2,
+        'total_vacuum': 15.0,
+        'max_cell_z': 40.0,
     }
 
 
@@ -208,14 +214,19 @@ def _cell_lengths_xy(atoms: Atoms) -> Tuple[float, float]:
     return float(np.linalg.norm(atoms.cell[0])), float(np.linalg.norm(atoms.cell[1]))
 
 
-def _find_best_supercells(requested_graphene_n: int, max_strain: float = 0.08) -> Tuple[int, Tuple[int, int, int], float]:
+def _find_best_supercells(
+    requested_graphene_n: int,
+    max_strain: float = 0.08,
+    layers: int = 3,
+    vacuum: float = 10.0,
+) -> Tuple[int, Tuple[int, int, int], float]:
     """Search small graphene/CuS supercells to reduce in-plane mismatch."""
     best = None
     for g_n in range(max(2, requested_graphene_n - 2), requested_graphene_n + 5):
         g = build_graphene_nanoplate(size=(g_n, g_n, 1), vacuum=18.0)
         g_a, g_b = _cell_lengths_xy(g)
         for rep in [(1, 1, 1), (2, 2, 1), (3, 3, 1)]:
-            c = build_covellite_slab(layers=4, vacuum=18.0, supercell=rep)
+            c = build_covellite_slab(layers=layers, vacuum=vacuum, supercell=rep)
             c_a, c_b = _cell_lengths_xy(c)
             sx = abs(1.0 - g_a / c_a)
             sy = abs(1.0 - g_b / c_b)
@@ -227,6 +238,24 @@ def _find_best_supercells(requested_graphene_n: int, max_strain: float = 0.08) -
                 return cand
     assert best is not None
     return best
+
+
+def _enforce_total_vacuum(atoms: Atoms, total_vacuum: float = 15.0, max_cell_z: float | None = None) -> Dict[str, float]:
+    """Center structure and enforce a compact z-cell for faster FFT grids."""
+    import numpy as np
+
+    z = atoms.positions[:, 2]
+    thickness = float(np.max(z) - np.min(z))
+    target_cell_z = thickness + float(total_vacuum)
+    if max_cell_z is not None:
+        target_cell_z = min(target_cell_z, float(max_cell_z))
+    target_cell_z = max(target_cell_z, thickness + 10.0)  # keep a safe minimum total vacuum
+
+    cell = atoms.cell.array.copy()
+    cell[2, 2] = target_cell_z
+    atoms.set_cell(cell, scale_atoms=False)
+    atoms.center(axis=2)
+    return {'thickness': thickness, 'cell_z': float(atoms.cell[2, 2]), 'total_vacuum': float(atoms.cell[2, 2] - thickness)}
 
 def run(output_dir: Path, graphene_n: int, spacing: float, adsorbate: str, profile: str, engine: str) -> None:
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -244,16 +273,31 @@ def run(output_dir: Path, graphene_n: int, spacing: float, adsorbate: str, profi
     (output_dir / 'run_metadata.txt').write_text('\n'.join(f'{k}: {v}' for k, v in metadata.items()) + '\n', encoding='utf-8')
 
     max_strain = 0.08
-    best_graphene_n, best_rep, best_score = _find_best_supercells(graphene_n, max_strain=max_strain)
+    best_graphene_n, best_rep, best_score = _find_best_supercells(
+        graphene_n,
+        max_strain=max_strain,
+        layers=int(run_cfg['layers']),
+        vacuum=float(run_cfg['vacuum']),
+    )
     graphene = build_graphene_nanoplate(size=(best_graphene_n, best_graphene_n, 1), vacuum=float(run_cfg['vacuum']))
     cus_slab = build_covellite_slab(
-        layers=5 if profile == 'publish' else 4,
+        layers=int(run_cfg['layers']),
         vacuum=float(run_cfg['vacuum']),
         supercell=best_rep,
     )
     composite, mismatch = create_graphene_cus_composite(graphene, cus_slab, spacing=spacing, max_strain=max_strain)
+    vac_report = _enforce_total_vacuum(
+        composite,
+        total_vacuum=float(run_cfg['total_vacuum']),
+        max_cell_z=float(run_cfg['max_cell_z']),
+    )
     (output_dir / 'lattice_mismatch.txt').write_text(
-        f"{mismatch}\nselected_graphene_n={best_graphene_n}, selected_cus_rep={best_rep}, residual_max_strain={best_score:.4f}\n",
+        (
+            f"{mismatch}\n"
+            f"selected_graphene_n={best_graphene_n}, selected_cus_rep={best_rep}, residual_max_strain={best_score:.4f}\n"
+            f"thickness={vac_report['thickness']:.3f} A, cell_z={vac_report['cell_z']:.3f} A, "
+            f"total_vacuum={vac_report['total_vacuum']:.3f} A\n"
+        ),
         encoding='utf-8',
     )
 
@@ -309,24 +353,13 @@ def run(output_dir: Path, graphene_n: int, spacing: float, adsorbate: str, profi
         fmax=float(run_cfg['fmax']),
         steps=int(run_cfg['steps']),
     )
-    if str(run_cfg['mode_type']) == 'pw':
-        calc_relax.write(str(output_dir / 'composite_relaxed.gpw'), mode='all')
+    calc_relax.write(str(output_dir / 'composite_relaxed.gpw'), mode='all')
 
     calc_g = make_gpaw_calculator(kpts=run_cfg['kpts'], ecut=float(run_cfg['ecut']), xc='PBE', txt=str(output_dir / 'graphene_sp.log'), mode_type=str(run_cfg['mode_type']))
     calc_c = make_gpaw_calculator(kpts=run_cfg['kpts'], ecut=float(run_cfg['ecut']), xc='PBE', txt=str(output_dir / 'cus_sp.log'), mode_type=str(run_cfg['mode_type']))
     e_graphene = single_point_energy(graphene, calc_g, gpw_out=str(output_dir / 'graphene.gpw'))
     e_cus = single_point_energy(cus_slab, calc_c, gpw_out=str(output_dir / 'cus.gpw'))
     e_bind = compute_binding_energy(e_comp, e_graphene, e_cus)
-
-    if str(run_cfg['mode_type']) != 'pw':
-        calc_post = make_gpaw_calculator(
-            kpts=run_cfg['kpts'],
-            ecut=float(run_cfg['ecut']),
-            xc='PBE',
-            txt=str(output_dir / 'post_pw.log'),
-            mode_type='pw',
-        )
-        single_point_energy(composite_relaxed, calc_post, gpw_out=str(output_dir / 'composite_relaxed.gpw'))
 
     calc_loaded = GPAW(str(output_dir / 'composite_relaxed.gpw'), txt=None)
     energies, dos = compute_dos(calc_loaded, npts=int(run_cfg['dos_npts']), width=float(run_cfg['dos_width']))
@@ -337,8 +370,14 @@ def run(output_dir: Path, graphene_n: int, spacing: float, adsorbate: str, profi
     plot_xy(energies, dos, 'Energy - E_F (eV)', 'DOS (states/eV)', 'Total DOS', str(output_dir / 'dos_total.png'))
     plot_xy(energies_p, pdos_cu_d, 'Energy - E_F (eV)', 'PDOS (states/eV)', 'Cu-d PDOS', str(output_dir / 'pdos_cu_d.png'))
 
-    bs = compute_band_structure(calc_loaded, path='GMKG', npoints=140 if profile == 'publish' else 80)
-    bs.plot(filename=str(output_dir / 'band_structure.png'), show=False, emin=-6, emax=4)
+    if str(run_cfg['mode_type']) == 'lcao':
+        path = composite_relaxed.cell.bandpath('GMKG', npoints=80)
+        calc_bands = calc_loaded.fixed_density(kpts=path, symmetry='off', txt=str(output_dir / 'bandstructure.log'))
+        bs = calc_bands.band_structure()
+        bs.plot(filename=str(output_dir / 'band_structure.png'), show=False, emin=-6, emax=4)
+    else:
+        bs = compute_band_structure(calc_loaded, path='GMKG', npoints=140 if profile == 'publish' else 80)
+        bs.plot(filename=str(output_dir / 'band_structure.png'), show=False, emin=-6, emax=4)
 
     ads_system = add_adsorbate_to_composite(composite_relaxed, adsorbate=adsorbate, height=2.4)
     calc_ads = make_gpaw_calculator(kpts=run_cfg['kpts'], ecut=float(run_cfg['ecut']), xc='PBE', txt=str(output_dir / 'ads_relax.log'), mode_type=str(run_cfg['mode_type']))

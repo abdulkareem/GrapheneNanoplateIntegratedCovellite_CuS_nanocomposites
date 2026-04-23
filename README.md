@@ -46,4 +46,16 @@ The runner now auto-selects a compatible graphene/CuS supercell to avoid lattice
 ## Colab speed defaults
 - `--profile quick` now uses **LCAO mode** for faster relaxations on Colab CPU.
 - `--profile publish` keeps PW accuracy, but uses an **LCAO pre-relax** before PW refinement.
-- Vacuum is reduced for quick profile to shrink FFT workload.
+- Vacuum is reduced for quick profile to shrink FFT workload, and the runner now enforces compact z-cells and logs thickness/vacuum in `lattice_mismatch.txt`.
+
+## Vacuum sanity check (optional)
+If you want to verify your final z-height quickly:
+```python
+import numpy as np
+from ase.io import read
+atoms = read('/content/results/composite_relaxed.xyz')
+z = atoms.positions[:, 2]
+thickness = z.max() - z.min()
+cell_z = atoms.cell[2, 2]
+print(f'thickness={thickness:.2f} A, cell_z={cell_z:.2f} A, total_vacuum={cell_z-thickness:.2f} A')
+```
