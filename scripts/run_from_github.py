@@ -23,6 +23,12 @@ import subprocess
 from pathlib import Path
 from typing import Dict, Iterable, Tuple
 
+# Ensure repository root is importable when running `python scripts/run_from_github.py`
+import sys
+REPO_ROOT = Path(__file__).resolve().parents[1]
+if str(REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(REPO_ROOT))
+
 import matplotlib.pyplot as plt
 from ase import Atoms
 from ase.io import write
