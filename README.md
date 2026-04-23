@@ -2,8 +2,8 @@
 
 ## 2-line Colab launcher (auto-runs everything from GitHub)
 ```python
-!git clone https://github.com/<YOUR_GITHUB_USER>/GrapheneNanoplateIntegratedCovellite_CuS_nanocomposites.git && cd GrapheneNanoplateIntegratedCovellite_CuS_nanocomposites
-!pip -q install ase gpaw gpaw-data numpy scipy matplotlib && python scripts/run_from_github.py --output-dir /content/results --profile publish --engine gpaw --adsorbate Pb2+
+!git clone https://github.com/<YOUR_GITHUB_USER>/GrapheneNanoplateIntegratedCovellite_CuS_nanocomposites.git
+!cd GrapheneNanoplateIntegratedCovellite_CuS_nanocomposites && pip -q install ase gpaw gpaw-data numpy scipy matplotlib && python scripts/run_from_github.py --output-dir /content/results --profile publish --engine gpaw --adsorbate Pb2+
 ```
 
 ## Optional Quantum ESPRESSO backend
@@ -34,3 +34,6 @@ A complete paper draft template is provided at `docs/manuscript_draft_graphene_c
 
 ## Data/code sharing guidance
 See `docs/data_code_sharing_recommendations.md` for what to publish publicly vs archive externally (e.g., large `.gpw` files).
+
+
+**Colab tip:** each `!` line runs in a new shell. Keep `cd ... && python ...` in the same line.
