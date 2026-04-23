@@ -3,7 +3,7 @@
 ## 2-line Colab launcher (auto-runs everything from GitHub)
 ```python
 ![ -d GrapheneNanoplateIntegratedCovellite_CuS_nanocomposites ] || git clone https://github.com/<YOUR_GITHUB_USER>/GrapheneNanoplateIntegratedCovellite_CuS_nanocomposites.git
-!cd GrapheneNanoplateIntegratedCovellite_CuS_nanocomposites && pip -q install ase gpaw gpaw-data numpy scipy matplotlib && python scripts/run_from_github.py --output-dir /content/results --profile publish --engine gpaw --adsorbate Pb2+
+!cd GrapheneNanoplateIntegratedCovellite_CuS_nanocomposites && git pull --ff-only || true; pip -q install ase gpaw gpaw-data numpy scipy matplotlib && python scripts/run_from_github.py --output-dir /content/results --profile publish --engine gpaw --adsorbate Pb2+
 ```
 
 ## Optional Quantum ESPRESSO backend
@@ -39,3 +39,5 @@ See `docs/data_code_sharing_recommendations.md` for what to publish publicly vs 
 **Colab tip:** each `!` line runs in a new shell. Keep `cd ... && python ...` in the same line.
 
 If the repo already exists, the first line safely skips clone. To refresh, run `!cd GrapheneNanoplateIntegratedCovellite_CuS_nanocomposites && git pull`.
+
+The runner now auto-selects a compatible graphene/CuS supercell to avoid lattice-mismatch failures and logs the chosen supercells in `lattice_mismatch.txt`.

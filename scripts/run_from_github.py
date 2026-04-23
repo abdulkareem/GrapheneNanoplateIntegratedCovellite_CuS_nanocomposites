@@ -34,23 +34,46 @@ from ase import Atoms
 from ase.io import write
 from gpaw import GPAW
 
-from src.gpaw_cus_graphene_pipeline import (
-    add_adsorbate_to_composite,
-    build_covellite_slab,
-    build_graphene_nanoplate,
-    compute_adsorption_energy,
-    compute_band_structure,
-    compute_binding_energy,
-    compute_dos,
-    compute_pdos,
-    create_graphene_cus_composite,
-    make_gpaw_calculator,
-    plot_xy,
-    relax_structure,
-    save_artifacts,
-    save_structure_images,
-    single_point_energy,
-)
+try:
+    from src.gpaw_cus_graphene_pipeline import (
+        add_adsorbate_to_composite,
+        build_covellite_slab,
+        build_graphene_nanoplate,
+        compute_adsorption_energy,
+        compute_band_structure,
+        compute_binding_energy,
+        compute_dos,
+        compute_pdos,
+        create_graphene_cus_composite,
+        make_gpaw_calculator,
+        plot_xy,
+        relax_structure,
+        save_artifacts,
+        save_structure_images,
+        single_point_energy,
+    )
+except ModuleNotFoundError:
+    # Fallback for environments where `src` isn't treated as a package.
+    SRC_DIR = REPO_ROOT / 'src'
+    if str(SRC_DIR) not in sys.path:
+        sys.path.insert(0, str(SRC_DIR))
+    from gpaw_cus_graphene_pipeline import (
+        add_adsorbate_to_composite,
+        build_covellite_slab,
+        build_graphene_nanoplate,
+        compute_adsorption_energy,
+        compute_band_structure,
+        compute_binding_energy,
+        compute_dos,
+        compute_pdos,
+        create_graphene_cus_composite,
+        make_gpaw_calculator,
+        plot_xy,
+        relax_structure,
+        save_artifacts,
+        save_structure_images,
+        single_point_energy,
+    )
 
 
 def detect_accelerator() -> str:
@@ -172,6 +195,33 @@ def run_qe_single_point(atoms: Atoms, out_prefix: str, out_dir: Path, kpts=(3, 3
     return float(e)
 
 
+
+def _cell_lengths_xy(atoms: Atoms) -> Tuple[float, float]:
+    import numpy as np
+
+    return float(np.linalg.norm(atoms.cell[0])), float(np.linalg.norm(atoms.cell[1]))
+
+
+def _find_best_supercells(requested_graphene_n: int, max_strain: float = 0.08) -> Tuple[int, Tuple[int, int, int], float]:
+    """Search small graphene/CuS supercells to reduce in-plane mismatch."""
+    best = None
+    for g_n in range(max(2, requested_graphene_n - 2), requested_graphene_n + 5):
+        g = build_graphene_nanoplate(size=(g_n, g_n, 1), vacuum=18.0)
+        g_a, g_b = _cell_lengths_xy(g)
+        for rep in [(1, 1, 1), (2, 2, 1), (3, 3, 1)]:
+            c = build_covellite_slab(layers=4, vacuum=18.0, supercell=rep)
+            c_a, c_b = _cell_lengths_xy(c)
+            sx = abs(1.0 - g_a / c_a)
+            sy = abs(1.0 - g_b / c_b)
+            score = max(sx, sy)
+            cand = (g_n, rep, score)
+            if best is None or score < best[2]:
+                best = cand
+            if score <= max_strain:
+                return cand
+    assert best is not None
+    return best
+
 def run(output_dir: Path, graphene_n: int, spacing: float, adsorbate: str, profile: str, engine: str) -> None:
     output_dir.mkdir(parents=True, exist_ok=True)
     _set_pub_plot_style()
@@ -186,10 +236,19 @@ def run(output_dir: Path, graphene_n: int, spacing: float, adsorbate: str, profi
     }
     (output_dir / 'run_metadata.txt').write_text('\n'.join(f'{k}: {v}' for k, v in metadata.items()) + '\n', encoding='utf-8')
 
-    graphene = build_graphene_nanoplate(size=(graphene_n, graphene_n, 1), vacuum=18.0)
-    cus_slab = build_covellite_slab(layers=5 if profile == 'publish' else 4, vacuum=18.0, supercell=(2, 2, 1))
-    composite, mismatch = create_graphene_cus_composite(graphene, cus_slab, spacing=spacing, max_strain=0.08)
-    (output_dir / 'lattice_mismatch.txt').write_text(f'{mismatch}\n', encoding='utf-8')
+    max_strain = 0.08
+    best_graphene_n, best_rep, best_score = _find_best_supercells(graphene_n, max_strain=max_strain)
+    graphene = build_graphene_nanoplate(size=(best_graphene_n, best_graphene_n, 1), vacuum=18.0)
+    cus_slab = build_covellite_slab(
+        layers=5 if profile == 'publish' else 4,
+        vacuum=18.0,
+        supercell=best_rep,
+    )
+    composite, mismatch = create_graphene_cus_composite(graphene, cus_slab, spacing=spacing, max_strain=max_strain)
+    (output_dir / 'lattice_mismatch.txt').write_text(
+        f"{mismatch}\nselected_graphene_n={best_graphene_n}, selected_cus_rep={best_rep}, residual_max_strain={best_score:.4f}\n",
+        encoding='utf-8',
+    )
 
     if profile == 'publish':
         run_convergence_scan(composite, output_dir)
