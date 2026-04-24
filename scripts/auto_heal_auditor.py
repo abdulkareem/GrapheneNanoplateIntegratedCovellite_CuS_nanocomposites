@@ -12,6 +12,7 @@ import json
 import subprocess
 import sys
 import csv
+import re
 from dataclasses import dataclass, asdict
 from datetime import datetime, timezone
 from pathlib import Path
@@ -75,7 +76,17 @@ def detect_failure(stderr: str) -> str:
         return 'mpi_abort'
     if 'MemoryError' in s or 'Out of memory' in s:
         return 'oom'
+    if _detect_energy_oscillation(s):
+        return 'scf_oscillation'
     return 'unknown'
+
+
+def _detect_energy_oscillation(text: str) -> bool:
+    vals = [float(v) for v in re.findall(r'iter:\s+\d+\s+\S+\s+(-?\d+\.\d+)', text or '')]
+    if len(vals) < 12:
+        return False
+    tail = vals[-10:]
+    return (max(tail) - min(tail)) > 80.0
 
 
 def _first_error_excerpt(stdout: str, stderr: str) -> str:
@@ -166,6 +177,7 @@ def main() -> None:
     spacing = float(args.spacing)
     accepted: AttemptResult | None = None
     enable_gdrive_sync = True
+    scf_stable = False
 
     for attempt in range(1, int(args.max_attempts) + 1):
         cmd = [
@@ -190,6 +202,8 @@ def main() -> None:
             cmd += ['--gdrive-dir', str(args.gdrive_dir)]
         else:
             cmd += ['--no-gdrive-sync']
+        if scf_stable:
+            cmd += ['--scf-stable']
         proc, logfile = run_attempt(cmd, args.output_dir, attempt, cwd=REPO_ROOT)
         fixes: list[str] = []
         result = AttemptResult(
@@ -222,7 +236,7 @@ def main() -> None:
             attempts.append(result)
             break
 
-        failure = detect_failure(proc.stderr)
+        failure = detect_failure((proc.stderr or '') + '\n' + (proc.stdout or ''))
         if failure == 'grid_bounds':
             isolated_vacuum = min(isolated_vacuum + 2.0, 14.0)
             fixes.append(f'Detected GridBoundsError; increased isolated vacuum to {isolated_vacuum:.1f} Å.')
@@ -233,6 +247,10 @@ def main() -> None:
             profile = 'quick'
             spacing = min(spacing + 0.3, 3.2)
             fixes.append(f'Detected {failure}; using quick profile and increased spacing to {spacing:.2f} Å.')
+        elif failure == 'scf_oscillation':
+            scf_stable = True
+            profile = 'quick'
+            fixes.append('Detected SCF energy oscillation; retrying with --scf-stable (Mixer beta=0.01, cg eigensolver, narrower smearing).')
         elif failure == 'gdrive_missing':
             enable_gdrive_sync = False
             fixes.append('Google Drive mount not detected; retrying with --no-gdrive-sync.')

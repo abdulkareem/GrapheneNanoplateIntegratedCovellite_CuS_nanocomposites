@@ -15,7 +15,7 @@ from ase.build import add_adsorbate, bulk, graphene, make_supercell, molecule, s
 from ase.constraints import FixAtoms
 from ase.io import read, write
 from ase.optimize import BFGS
-from gpaw import GPAW, PW, FermiDirac
+from gpaw import GPAW, PW, FermiDirac, Mixer
 from gpaw.dos import DOSCalculator
 
 
@@ -151,6 +151,7 @@ def make_gpaw_calculator(
     mode_type: str = "pw",
     basis: str = "dzp",
     energy_convergence: float = 1e-5,
+    scf_stability: str = "normal",
 ) -> GPAW:
     """Construct CPU-friendly GPAW calculator for Colab.
 
@@ -169,13 +170,26 @@ def make_gpaw_calculator(
     else:
         raise ValueError(f"Unsupported mode_type={mode_type}. Use 'pw' or 'lcao'.")
 
+    scf_stability = scf_stability.lower()
+    if scf_stability not in {"normal", "stable"}:
+        raise ValueError("scf_stability must be 'normal' or 'stable'.")
+    mixer_kw = {}
+    solver_kw = {}
+    occ_width = occupations_width
+    if scf_stability == "stable":
+        mixer_kw = {"mixer": Mixer(beta=0.01, nmaxold=7, weight=100)}
+        solver_kw = {"eigensolver": "cg"}
+        occ_width = min(occupations_width, 0.05)
+
     calc = GPAW(
         xc=xc,
         kpts=kpts,
-        occupations=FermiDirac(occupations_width),
+        occupations=FermiDirac(occ_width),
         convergence={"energy": energy_convergence},
         txt=txt,
         parallel={"domain": 1, "band": 1} if mode_parallel else {},
+        **mixer_kw,
+        **solver_kw,
         **mode_kw,
         **extra_kw,
     )

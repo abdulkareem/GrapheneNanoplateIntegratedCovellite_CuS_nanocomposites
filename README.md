@@ -137,6 +137,8 @@ tail -n 40 /content/drive/MyDrive/gpaw_cus_graphene_project/results/correction_l
 ```
 By default, the auditor writes diagnostics even if quality checks fail and exits cleanly so your notebook cell does not crash.  
 Add `--strict-exit` if you want a non-zero exit code on failed quality gates (useful for CI).
+The auditor also auto-detects strong SCF energy oscillations and retries with `--scf-stable`
+(Mixer beta=0.01, `cg` eigensolver, narrower smearing).
 
 This writes:
 - `correction_log.txt` (what was changed and why)
