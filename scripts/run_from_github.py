@@ -141,6 +141,7 @@ def choose_profile(profile: str) -> Dict[str, object]:
             'max_cell_z': 60.0,
             'optimizer': 'LBFGS',
             'energy_conv': 1e-6,
+            'maxstep': 0.04,
         }
     return {
         'kpts': (3, 3, 1),
@@ -157,6 +158,7 @@ def choose_profile(profile: str) -> Dict[str, object]:
         'max_cell_z': 40.0,
         'optimizer': 'LBFGS',
         'energy_conv': 1e-5,
+        'maxstep': 0.05,
     }
 
 
@@ -314,14 +316,27 @@ def monitored_relax(
     fmax: float,
     steps: int,
     optimizer_name: str = 'LBFGS',
+    maxstep: float = 0.05,
 ):
     """Relax with instability detection and best-geometry capture."""
     atoms = atoms.copy()
     atoms.calc = calc
     opt_cls = _optimizer_class(optimizer_name)
-    opt = opt_cls(atoms, trajectory=str(traj_path), logfile=str(traj_path).replace('.traj', '.opt.log'))
+    opt = opt_cls(
+        atoms,
+        trajectory=str(traj_path),
+        logfile=str(traj_path).replace('.traj', '.opt.log'),
+        maxstep=maxstep,
+    )
 
-    state = {'energies': [], 'fmax': [], 'best_e': float('inf'), 'best_atoms': atoms.copy(), 'unstable': False}
+    state = {
+        'energies': [],
+        'fmax': [],
+        'best_e': float('inf'),
+        'best_atoms': atoms.copy(),
+        'unstable': False,
+        'reason': '',
+    }
 
     def monitor():
         e = atoms.get_potential_energy()
@@ -337,6 +352,15 @@ def monitored_relax(
             cur = state['fmax'][-1]
             if recent_min < 0.08 and cur > 0.15 and cur > 2.5 * recent_min:
                 state['unstable'] = True
+                state['reason'] = 'force_spike_after_near_convergence'
+                opt.stop()
+
+        # Catastrophic divergence guard
+        if len(state['fmax']) >= 3:
+            cur_f = state['fmax'][-1]
+            if cur_f > 5.0 or e > (state['best_e'] + 8.0):
+                state['unstable'] = True
+                state['reason'] = 'catastrophic_divergence'
                 opt.stop()
 
     opt.attach(monitor, interval=1)
@@ -441,10 +465,11 @@ def run(output_dir: Path, graphene_n: int, spacing: float, adsorbate: str, profi
         fmax=float(run_cfg['fmax']),
         steps=int(run_cfg['steps']),
         optimizer_name=str(run_cfg['optimizer']),
+        maxstep=float(run_cfg['maxstep']),
     )
     if relax_state['unstable']:
         (output_dir / 'optimizer_restart_note.txt').write_text(
-            'Instability detected in primary relax; restarting from best geometry with FIRE and tighter SCF.\\n',
+            f"Instability detected in primary relax ({relax_state['reason']}); restarting from best geometry with FIRE and tighter SCF.\n",
             encoding='utf-8',
         )
         restart_calc = make_gpaw_calculator(
@@ -462,6 +487,7 @@ def run(output_dir: Path, graphene_n: int, spacing: float, adsorbate: str, profi
             fmax=min(0.02, float(run_cfg['fmax'])),
             steps=max(80, int(run_cfg['steps']) // 2),
             optimizer_name='FIRE',
+            maxstep=0.03,
         )
         calc_relax = restart_calc
 
@@ -503,6 +529,7 @@ def run(output_dir: Path, graphene_n: int, spacing: float, adsorbate: str, profi
         fmax=float(run_cfg['fmax']),
         steps=max(120, int(run_cfg['steps']) - 20),
         optimizer_name='LBFGS',
+        maxstep=float(run_cfg['maxstep']),
     )
     ads_relaxed = ads_state['best_atoms'].copy()
     ads_relaxed.calc = calc_ads
