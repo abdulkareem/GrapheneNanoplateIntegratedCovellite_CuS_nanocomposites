@@ -15,7 +15,7 @@ from ase.build import add_adsorbate, bulk, graphene, make_supercell, molecule, s
 from ase.constraints import FixAtoms
 from ase.io import read, write
 from ase.optimize import BFGS
-from gpaw import GPAW, PW, FermiDirac
+from gpaw import GPAW, PW, FermiDirac, Mixer
 from gpaw.dos import DOSCalculator
 
 
@@ -151,6 +151,7 @@ def make_gpaw_calculator(
     mode_type: str = "pw",
     basis: str = "dzp",
     energy_convergence: float = 1e-5,
+    scf_stability: str = "normal",
 ) -> GPAW:
     """Construct CPU-friendly GPAW calculator for Colab.
 
@@ -169,13 +170,26 @@ def make_gpaw_calculator(
     else:
         raise ValueError(f"Unsupported mode_type={mode_type}. Use 'pw' or 'lcao'.")
 
+    scf_stability = scf_stability.lower()
+    if scf_stability not in {"normal", "stable"}:
+        raise ValueError("scf_stability must be 'normal' or 'stable'.")
+    mixer_kw = {}
+    solver_kw = {}
+    occ_width = occupations_width
+    if scf_stability == "stable":
+        mixer_kw = {"mixer": Mixer(beta=0.01, nmaxold=7, weight=100)}
+        solver_kw = {"eigensolver": "cg"}
+        occ_width = min(occupations_width, 0.05)
+
     calc = GPAW(
         xc=xc,
         kpts=kpts,
-        occupations=FermiDirac(occupations_width),
+        occupations=FermiDirac(occ_width),
         convergence={"energy": energy_convergence},
         txt=txt,
         parallel={"domain": 1, "band": 1} if mode_parallel else {},
+        **mixer_kw,
+        **solver_kw,
         **mode_kw,
         **extra_kw,
     )
@@ -198,9 +212,26 @@ def relax_structure(
     return atoms, energy
 
 
+def _prepare_isolated_system(atoms: Atoms, min_fractional_margin: float = 0.10, vacuum: float = 6.0) -> Atoms:
+    """Ensure non-periodic systems are safely away from cell boundaries for GPAW."""
+    a = atoms.copy()
+    if np.all(a.pbc):
+        return a
+
+    cell_lengths = a.cell.lengths()
+    if np.any(cell_lengths < 1.0e-6):
+        a.center(vacuum=vacuum)
+        return a
+
+    frac = a.get_scaled_positions(wrap=False)
+    if frac.min() < min_fractional_margin or frac.max() > (1.0 - min_fractional_margin):
+        a.center()
+    return a
+
+
 def single_point_energy(atoms: Atoms, calc: GPAW, gpw_out: Optional[str] = None) -> float:
     """Compute single-point total energy and optionally save restart file."""
-    atoms = atoms.copy()
+    atoms = _prepare_isolated_system(atoms)
     atoms.calc = calc
     e = atoms.get_potential_energy()
     if gpw_out is not None:
@@ -226,12 +257,35 @@ def compute_pdos(
     npts: int = 1200,
     width: float = 0.15,
 ) -> Tuple[np.ndarray, np.ndarray]:
-    """Projected DOS using LCAO projector channels."""
+    """Projected DOS using atom-centered channels.
+
+    Notes
+    -----
+    Converts angular labels ("s", "p", "d", "f") to the integer ``l`` value
+    expected by GPAW's projector DOS APIs.
+    """
+    if not atom_indices:
+        raise ValueError("atom_indices is empty; cannot compute PDOS.")
+
+    l_map = {"s": 0, "p": 1, "d": 2, "f": 3}
+    l_value = l_map.get(str(angular).lower(), angular)
+
     dos_calc = DOSCalculator.from_calculator(calc)
     energies = dos_calc.get_energies(npoints=npts)
     pdos = np.zeros_like(energies)
+    nspins = int(getattr(calc, 'get_number_of_spins', lambda: 1)())
+
     for idx in atom_indices:
-        pdos += dos_calc.raw_pdos(energies, a=idx, l=angular, width=width)
+        if nspins > 1:
+            for spin in range(nspins):
+                try:
+                    pdos += dos_calc.raw_pdos(energies, a=idx, l=l_value, spin=spin, width=width)
+                except TypeError:
+                    # Older GPAW APIs may not expose spin kwarg here.
+                    pdos += dos_calc.raw_pdos(energies, a=idx, l=l_value, width=width)
+                    break
+        else:
+            pdos += dos_calc.raw_pdos(energies, a=idx, l=l_value, width=width)
     return energies, pdos
 
 

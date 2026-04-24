@@ -20,6 +20,7 @@ import csv
 import os
 import shutil
 import subprocess
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Dict, Iterable, Tuple
 
@@ -125,6 +126,27 @@ def write_output_manifest(out_dir: Path) -> Path:
     return manifest
 
 
+def sync_outputs_to_google_drive(output_dir: Path, gdrive_dir: Path) -> Path:
+    """Mirror all outputs/logs to Google Drive (Colab-friendly)."""
+    output_dir = output_dir.resolve()
+    gdrive_dir = gdrive_dir.expanduser().resolve()
+
+    if not gdrive_dir.exists():
+        raise RuntimeError(
+            f"Google Drive directory does not exist: {gdrive_dir}. "
+            "Mount Drive first (e.g., /content/drive) or pass --gdrive-dir to an existing folder."
+        )
+
+    # If user already writes directly into Drive, no extra copy is needed.
+    if str(output_dir).startswith(str(gdrive_dir)):
+        return output_dir
+
+    stamp = datetime.now(timezone.utc).strftime('%Y%m%d_%H%M%S_UTC')
+    dest = gdrive_dir / f'{output_dir.name}_{stamp}'
+    shutil.copytree(output_dir, dest, dirs_exist_ok=True)
+    return dest
+
+
 def choose_profile(profile: str) -> Dict[str, object]:
     if profile == 'publish':
         return {
@@ -143,6 +165,7 @@ def choose_profile(profile: str) -> Dict[str, object]:
             'optimizer': 'LBFGS',
             'energy_conv': 1e-6,
             'maxstep': 0.04,
+            'scf_stability': 'normal',
         }
     return {
         'kpts': (3, 3, 1),
@@ -160,6 +183,7 @@ def choose_profile(profile: str) -> Dict[str, object]:
         'optimizer': 'LBFGS',
         'energy_conv': 1e-6,
         'maxstep': 0.05,
+        'scf_stability': 'stable',
     }
 
 
@@ -187,7 +211,14 @@ def run_convergence_scan(composite: Atoms, out_dir: Path, xc: str = 'PBE') -> Pa
         ((5, 5, 1), 520),
     ]
     for kpts, ecut in scans:
-        calc = make_gpaw_calculator(kpts=kpts, ecut=float(ecut), xc=xc, txt=str(out_dir / f'conv_k{kpts}_e{ecut}.log'), mode_type='pw')
+        calc = make_gpaw_calculator(
+            kpts=kpts,
+            ecut=float(ecut),
+            xc=xc,
+            txt=str(out_dir / f'conv_k{kpts}_e{ecut}.log'),
+            mode_type='pw',
+            scf_stability='stable',
+        )
         e = single_point_energy(composite, calc)
         rows.append({'kpts': str(kpts), 'ecut_eV': ecut, 'energy_eV': float(e)})
 
@@ -310,6 +341,10 @@ def _optimizer_class(name: str):
     raise ValueError(f'Unsupported optimizer: {name}')
 
 
+class _EarlyStopRelax(Exception):
+    """Internal signal used to stop ASE optimizers from monitor callbacks."""
+
+
 def monitored_relax(
     atoms: Atoms,
     calc,
@@ -354,7 +389,7 @@ def monitored_relax(
             if recent_min < 0.08 and cur > 0.15 and cur > 2.5 * recent_min:
                 state['unstable'] = True
                 state['reason'] = 'force_spike_after_near_convergence'
-                opt.stop()
+                raise _EarlyStopRelax(state['reason'])
 
         # Catastrophic divergence guard
         if len(state['fmax']) >= 3:
@@ -362,10 +397,14 @@ def monitored_relax(
             if cur_f > 5.0 or e > (state['best_e'] + 8.0):
                 state['unstable'] = True
                 state['reason'] = 'catastrophic_divergence'
-                opt.stop()
+                raise _EarlyStopRelax(state['reason'])
 
     opt.attach(monitor, interval=1)
-    opt.run(fmax=fmax, steps=steps)
+    try:
+        opt.run(fmax=fmax, steps=steps)
+    except _EarlyStopRelax:
+        # Deliberate early exit from the monitor callback.
+        pass
     return state
 
 
@@ -408,10 +447,21 @@ def _pick_restart_geometry(traj_path: Path, force_threshold: float = 0.08) -> tu
     )
     return atoms_out, note
 
-def run(output_dir: Path, graphene_n: int, spacing: float, adsorbate: str, profile: str, engine: str) -> None:
+def run(
+    output_dir: Path,
+    graphene_n: int,
+    spacing: float,
+    adsorbate: str,
+    profile: str,
+    engine: str,
+    isolated_vacuum: float = 6.0,
+    scf_stable: bool = False,
+) -> None:
     output_dir.mkdir(parents=True, exist_ok=True)
     _set_pub_plot_style()
     run_cfg = choose_profile(profile)
+    if scf_stable:
+        run_cfg['scf_stability'] = 'stable'
 
     metadata = {
         'accelerator': detect_accelerator(),
@@ -422,6 +472,7 @@ def run(output_dir: Path, graphene_n: int, spacing: float, adsorbate: str, profi
         'mode_type': run_cfg['mode_type'],
         'energy_conv': run_cfg['energy_conv'],
         'maxstep': run_cfg['maxstep'],
+        'scf_stability': run_cfg['scf_stability'],
     }
     (output_dir / 'run_metadata.txt').write_text('\n'.join(f'{k}: {v}' for k, v in metadata.items()) + '\n', encoding='utf-8')
 
@@ -494,6 +545,7 @@ def run(output_dir: Path, graphene_n: int, spacing: float, adsorbate: str, profi
             mode_type='lcao',
             basis='dzp',
             energy_convergence=float(run_cfg['energy_conv']),
+            scf_stability=str(run_cfg['scf_stability']),
         )
         working, _ = relax_structure(
             working,
@@ -510,6 +562,7 @@ def run(output_dir: Path, graphene_n: int, spacing: float, adsorbate: str, profi
         txt=str(output_dir / 'relax.log'),
         mode_type=str(run_cfg['mode_type']),
         energy_convergence=float(run_cfg['energy_conv']),
+        scf_stability=str(run_cfg['scf_stability']),
     )
     relax_state = monitored_relax(
         working,
@@ -532,6 +585,7 @@ def run(output_dir: Path, graphene_n: int, spacing: float, adsorbate: str, profi
             txt=str(output_dir / 'relax_restart.log'),
             mode_type=str(run_cfg['mode_type']),
             energy_convergence=min(float(run_cfg['energy_conv']), 1e-6),
+            scf_stability='stable',
         )
         relax_state = monitored_relax(
             relax_state['best_atoms'],
@@ -549,8 +603,8 @@ def run(output_dir: Path, graphene_n: int, spacing: float, adsorbate: str, profi
     e_comp = composite_relaxed.get_potential_energy()
     calc_relax.write(str(output_dir / 'composite_relaxed.gpw'), mode='all')
 
-    calc_g = make_gpaw_calculator(kpts=run_cfg['kpts'], ecut=float(run_cfg['ecut']), xc='PBE', txt=str(output_dir / 'graphene_sp.log'), mode_type=str(run_cfg['mode_type']), energy_convergence=float(run_cfg['energy_conv']))
-    calc_c = make_gpaw_calculator(kpts=run_cfg['kpts'], ecut=float(run_cfg['ecut']), xc='PBE', txt=str(output_dir / 'cus_sp.log'), mode_type=str(run_cfg['mode_type']), energy_convergence=float(run_cfg['energy_conv']))
+    calc_g = make_gpaw_calculator(kpts=run_cfg['kpts'], ecut=float(run_cfg['ecut']), xc='PBE', txt=str(output_dir / 'graphene_sp.log'), mode_type=str(run_cfg['mode_type']), energy_convergence=float(run_cfg['energy_conv']), scf_stability=str(run_cfg['scf_stability']))
+    calc_c = make_gpaw_calculator(kpts=run_cfg['kpts'], ecut=float(run_cfg['ecut']), xc='PBE', txt=str(output_dir / 'cus_sp.log'), mode_type=str(run_cfg['mode_type']), energy_convergence=float(run_cfg['energy_conv']), scf_stability=str(run_cfg['scf_stability']))
     e_graphene = single_point_energy(graphene, calc_g, gpw_out=str(output_dir / 'graphene.gpw'))
     e_cus = single_point_energy(cus_slab, calc_c, gpw_out=str(output_dir / 'cus.gpw'))
     e_bind = compute_binding_energy(e_comp, e_graphene, e_cus)
@@ -558,9 +612,17 @@ def run(output_dir: Path, graphene_n: int, spacing: float, adsorbate: str, profi
     calc_loaded = GPAW(str(output_dir / 'composite_relaxed.gpw'), txt=None)
     energies, dos = compute_dos(calc_loaded, npts=int(run_cfg['dos_npts']), width=float(run_cfg['dos_width']))
     cu_indices = [i for i, a in enumerate(composite_relaxed) if a.symbol == 'Cu']
+    if not cu_indices:
+        raise RuntimeError('No Cu atoms found in relaxed composite; cannot compute Cu-d PDOS.')
+    (output_dir / 'pdos_indices.txt').write_text(
+        'Cu atom indices used for PDOS: ' + ', '.join(map(str, cu_indices)) + '\n',
+        encoding='utf-8',
+    )
     energies_p, pdos_cu_d = compute_pdos(
         calc_loaded, atom_indices=cu_indices, angular='d', npts=int(run_cfg['dos_npts']), width=float(run_cfg['dos_width'])
     )
+    np.savetxt(output_dir / 'dos_total.csv', np.column_stack((energies, dos)), delimiter=',', header='energy_eV,dos', comments='')
+    np.savetxt(output_dir / 'pdos_cu_d.csv', np.column_stack((energies_p, pdos_cu_d)), delimiter=',', header='energy_eV,pdos_cu_d', comments='')
     plot_xy(energies, dos, 'Energy - E_F (eV)', 'DOS (states/eV)', 'Total DOS', str(output_dir / 'dos_total.png'))
     plot_xy(energies_p, pdos_cu_d, 'Energy - E_F (eV)', 'PDOS (states/eV)', 'Cu-d PDOS', str(output_dir / 'pdos_cu_d.png'))
 
@@ -574,7 +636,7 @@ def run(output_dir: Path, graphene_n: int, spacing: float, adsorbate: str, profi
         bs.plot(filename=str(output_dir / 'band_structure.png'), show=False, emin=-6, emax=4)
 
     ads_system = add_adsorbate_to_composite(composite_relaxed, adsorbate=adsorbate, height=2.4)
-    calc_ads = make_gpaw_calculator(kpts=run_cfg['kpts'], ecut=float(run_cfg['ecut']), xc='PBE', txt=str(output_dir / 'ads_relax.log'), mode_type=str(run_cfg['mode_type']), energy_convergence=float(run_cfg['energy_conv']))
+    calc_ads = make_gpaw_calculator(kpts=run_cfg['kpts'], ecut=float(run_cfg['ecut']), xc='PBE', txt=str(output_dir / 'ads_relax.log'), mode_type=str(run_cfg['mode_type']), energy_convergence=float(run_cfg['energy_conv']), scf_stability=str(run_cfg['scf_stability']))
     ads_state = monitored_relax(
         ads_system,
         calc_ads,
@@ -589,7 +651,9 @@ def run(output_dir: Path, graphene_n: int, spacing: float, adsorbate: str, profi
     e_ads_total = ads_relaxed.get_potential_energy()
 
     ads_atom = Atoms('Pb' if adsorbate == 'Pb2+' else 'Cd', positions=[(0, 0, 0)], cell=[15, 15, 15], pbc=False)
-    calc_adsorbate = make_gpaw_calculator(kpts=(1, 1, 1), ecut=float(run_cfg['ecut']), xc='PBE', txt=str(output_dir / 'adsorbate_sp.log'), mode_type=str(run_cfg['mode_type']), energy_convergence=float(run_cfg['energy_conv']))
+    # Keep isolated adsorbate safely away from non-periodic cell boundaries.
+    ads_atom.center(vacuum=max(0.0, float(isolated_vacuum)))
+    calc_adsorbate = make_gpaw_calculator(kpts=(1, 1, 1), ecut=float(run_cfg['ecut']), xc='PBE', txt=str(output_dir / 'adsorbate_sp.log'), mode_type=str(run_cfg['mode_type']), energy_convergence=float(run_cfg['energy_conv']), scf_stability='stable')
     e_adsorbate = single_point_energy(ads_atom, calc_adsorbate, gpw_out=str(output_dir / 'adsorbate.gpw'))
     e_ads = compute_adsorption_energy(e_ads_total, e_comp, e_adsorbate)
 
@@ -639,6 +703,28 @@ def main() -> None:
     parser.add_argument('--spacing', type=float, default=2.5, help='Initial CuS-graphene gap (Å)')
     parser.add_argument('--profile', type=str, default='quick', choices=['quick', 'publish'])
     parser.add_argument('--engine', type=str, default='gpaw', choices=['gpaw', 'qe'])
+    parser.add_argument(
+        '--isolated-vacuum',
+        type=float,
+        default=6.0,
+        help='Vacuum padding (Å) used when centering isolated adsorbate reference calculations.',
+    )
+    parser.add_argument(
+        '--scf-stable',
+        action='store_true',
+        help='Use more conservative SCF settings (Mixer beta=0.01, cg eigensolver, narrower smearing).',
+    )
+    parser.add_argument(
+        '--gdrive-dir',
+        type=Path,
+        default=Path('/content/drive/MyDrive/GrapheneCuS_outputs'),
+        help='Google Drive folder where all outputs/logs are mirrored.',
+    )
+    parser.add_argument(
+        '--no-gdrive-sync',
+        action='store_true',
+        help='Disable post-run mirroring to Google Drive.',
+    )
     args = parser.parse_args()
 
     run(
@@ -648,7 +734,12 @@ def main() -> None:
         adsorbate=args.adsorbate,
         profile=args.profile,
         engine=args.engine,
+        isolated_vacuum=args.isolated_vacuum,
+        scf_stable=args.scf_stable,
     )
+    if not args.no_gdrive_sync:
+        drive_path = sync_outputs_to_google_drive(args.output_dir, args.gdrive_dir)
+        print('Google Drive mirror complete:', drive_path)
 
 
 if __name__ == '__main__':
