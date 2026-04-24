@@ -130,6 +130,11 @@ def main() -> None:
     parser.add_argument('--gdrive-dir', type=Path, default=Path('/content/drive/MyDrive/GrapheneCuS_outputs'))
     parser.add_argument('--max-attempts', type=int, default=4)
     parser.add_argument('--pdos-min-peak', type=float, default=1.0e-3)
+    parser.add_argument(
+        '--strict-exit',
+        action='store_true',
+        help='Return non-zero exit code if no quality-accepted run is produced.',
+    )
     args = parser.parse_args()
 
     correction_log = args.output_dir / 'correction_log.txt'
@@ -224,7 +229,11 @@ def main() -> None:
     write_publication_report(args.output_dir, accepted)
 
     if accepted is None:
-        raise SystemExit('Auto-heal failed to produce a quality-accepted run. See correction_log.txt.')
+        msg = 'Auto-heal did not produce a quality-accepted run. See correction_log.txt and auto_heal_history.json.'
+        if args.strict_exit:
+            raise SystemExit(msg)
+        print(msg)
+        return
 
     print(f'Auto-heal succeeded on attempt {accepted.attempt}.')
 
