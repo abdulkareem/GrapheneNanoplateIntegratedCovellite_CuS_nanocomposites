@@ -17,6 +17,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import List
 
+REPO_ROOT = Path(__file__).resolve().parents[1]
+
 
 @dataclass
 class AttemptResult:
@@ -33,10 +35,15 @@ def utc_now() -> str:
     return datetime.now(timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ')
 
 
-def run_attempt(cmd: List[str], output_dir: Path, attempt: int) -> tuple[subprocess.CompletedProcess[str], Path]:
+def run_attempt(
+    cmd: List[str],
+    output_dir: Path,
+    attempt: int,
+    cwd: Path,
+) -> tuple[subprocess.CompletedProcess[str], Path]:
     output_dir.mkdir(parents=True, exist_ok=True)
     log_path = output_dir / f'auto_heal_attempt_{attempt}.log'
-    proc = subprocess.run(cmd, capture_output=True, text=True)
+    proc = subprocess.run(cmd, capture_output=True, text=True, cwd=str(cwd))
     merged = [
         f'[{utc_now()}] COMMAND: {" ".join(cmd)}',
         '',
@@ -137,7 +144,7 @@ def main() -> None:
     for attempt in range(1, int(args.max_attempts) + 1):
         cmd = [
             sys.executable,
-            'scripts/run_from_github.py',
+            str(REPO_ROOT / 'scripts' / 'run_from_github.py'),
             '--output-dir',
             str(args.output_dir),
             '--adsorbate',
@@ -155,7 +162,7 @@ def main() -> None:
             '--gdrive-dir',
             str(args.gdrive_dir),
         ]
-        proc, logfile = run_attempt(cmd, args.output_dir, attempt)
+        proc, logfile = run_attempt(cmd, args.output_dir, attempt, cwd=REPO_ROOT)
         fixes: list[str] = []
         result = AttemptResult(
             attempt=attempt,
