@@ -78,6 +78,10 @@ def detect_failure(stderr: str) -> str:
         return 'oom'
     if _detect_energy_oscillation(s):
         return 'scf_oscillation'
+    if "AttributeError: 'LBFGS' object has no attribute 'stop'" in s:
+        return 'optimizer_stop_api'
+    if 'unrecognized arguments:' in s:
+        return 'cli_args'
     return 'unknown'
 
 
@@ -101,13 +105,27 @@ def _first_error_excerpt(stdout: str, stderr: str) -> str:
     text = '\n'.join([(stderr or ''), (stdout or '')]).strip()
     if not text:
         return ''
-    for line in text.splitlines():
+    lines = text.splitlines()
+    for line in lines:
         ln = line.strip()
         if not ln:
             continue
         if any(k in ln for k in ['Error', 'Exception', 'Traceback', 'ModuleNotFoundError', 'RuntimeError']):
             return ln[:220]
+    # Fallback: choose last traceback-like line if present.
+    for line in reversed(lines):
+        ln = line.strip()
+        if 'Error:' in ln or 'Exception:' in ln:
+            return ln[:220]
     return text.splitlines()[0][:220]
+
+
+def _last_exception_line(text: str) -> str:
+    for line in reversed((text or '').splitlines()):
+        ln = line.strip()
+        if 'Error:' in ln or 'Exception:' in ln:
+            return ln
+    return ''
 
 
 def pdos_max_from_csv(output_dir: Path) -> float | None:
@@ -267,9 +285,19 @@ def main() -> None:
             fixes.append(f'Missing Python package(s) detected; install with: pip install {pkg}')
             attempts.append(result)
             break
+        elif failure == 'optimizer_stop_api':
+            fixes.append("Detected legacy optimizer stop() API issue; pull latest repo commit and retry.")
+            attempts.append(result)
+            break
+        elif failure == 'cli_args':
+            fixes.append("Detected CLI argument parsing failure. Re-run command without escaped '\\n' tokens and pass arguments as normal shell words.")
+            attempts.append(result)
+            break
         else:
-            excerpt = result.failure_excerpt or 'no stderr/stdout excerpt captured'
-            fixes.append(f'Unknown failure type; no automatic patch available. First error line: {excerpt}')
+            combined = (proc.stderr or '') + '\n' + (proc.stdout or '')
+            last_exc = _last_exception_line(combined)
+            excerpt = last_exc or result.failure_excerpt or 'no stderr/stdout excerpt captured'
+            fixes.append(f'Unknown failure type; no automatic patch available. Error excerpt: {excerpt}')
             attempts.append(result)
             break
 

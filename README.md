@@ -129,10 +129,7 @@ REPO=/content/GrapheneNanoplateIntegratedCovellite_CuS_nanocomposites
 git -C "$REPO" pull --ff-only
 python -m pip -q install ase gpaw gpaw-data mpi4py numpy scipy matplotlib
 cd "$REPO"
-python scripts/auto_heal_auditor.py \
-  --output-dir /content/drive/MyDrive/gpaw_cus_graphene_project/results \
-  --profile quick \
-  --engine gpaw || true
+python scripts/auto_heal_auditor.py --output-dir /content/drive/MyDrive/gpaw_cus_graphene_project/results --profile quick --engine gpaw || true
 tail -n 40 /content/drive/MyDrive/gpaw_cus_graphene_project/results/correction_log.txt || true
 ```
 By default, the auditor writes diagnostics even if quality checks fail and exits cleanly so your notebook cell does not crash.  
