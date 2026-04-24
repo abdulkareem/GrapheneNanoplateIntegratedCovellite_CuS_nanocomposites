@@ -68,6 +68,8 @@ def detect_failure(stderr: str) -> str:
         return 'missing_gpaw'
     if "ModuleNotFoundError: No module named 'ase'" in s:
         return 'missing_ase'
+    if "ModuleNotFoundError: No module named '" in s:
+        return 'missing_module'
     if 'GridBoundsError' in s:
         return 'grid_bounds'
     if 'ConvergenceError' in s or 'Convergence failure' in s:
@@ -110,12 +112,19 @@ def _first_error_excerpt(stdout: str, stderr: str) -> str:
         ln = line.strip()
         if not ln:
             continue
-        if any(k in ln for k in ['Error', 'Exception', 'Traceback', 'ModuleNotFoundError', 'RuntimeError']):
+        if ln.startswith('Traceback'):
+            continue
+        if any(k in ln for k in ['Error', 'Exception', 'ModuleNotFoundError', 'RuntimeError', 'MPI_ABORT', 'unrecognized arguments']):
             return ln[:220]
     # Fallback: choose last traceback-like line if present.
     for line in reversed(lines):
         ln = line.strip()
         if 'Error:' in ln or 'Exception:' in ln:
+            return ln[:220]
+    # Last non-empty line is often more informative than "Traceback..."
+    for line in reversed(lines):
+        ln = line.strip()
+        if ln:
             return ln[:220]
     return text.splitlines()[0][:220]
 
@@ -126,6 +135,11 @@ def _last_exception_line(text: str) -> str:
         if 'Error:' in ln or 'Exception:' in ln:
             return ln
     return ''
+
+
+def _missing_module_name(text: str) -> str:
+    m = re.search(r"ModuleNotFoundError: No module named '([^']+)'", text or '')
+    return m.group(1) if m else ''
 
 
 def pdos_max_from_csv(output_dir: Path) -> float | None:
@@ -283,6 +297,12 @@ def main() -> None:
         elif failure in {'missing_gpaw', 'missing_ase'}:
             pkg = 'gpaw gpaw-data ase mpi4py numpy scipy matplotlib' if failure == 'missing_gpaw' else 'ase'
             fixes.append(f'Missing Python package(s) detected; install with: pip install {pkg}')
+            attempts.append(result)
+            break
+        elif failure == 'missing_module':
+            mod = _missing_module_name((proc.stderr or '') + '\n' + (proc.stdout or ''))
+            pkg = mod if mod else '<missing-module>'
+            fixes.append(f"Missing Python module detected ({pkg}); install with: pip install {pkg}")
             attempts.append(result)
             break
         elif failure == 'optimizer_stop_api':
