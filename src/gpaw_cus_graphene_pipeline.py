@@ -177,8 +177,10 @@ def make_gpaw_calculator(
     solver_kw = {}
     occ_width = occupations_width
     if scf_stability == "stable":
-        mixer_kw = {"mixer": Mixer(beta=0.01, nmaxold=7, weight=100)}
-        solver_kw = {"eigensolver": "cg"}
+        mixer_kw = {"mixer": Mixer(beta=0.01, nmaxold=10, weight=100)}
+        # LCAO uses DirectLCAO eigensolver internally; forcing CG there triggers assertion.
+        if mode_type != "lcao":
+            solver_kw = {"eigensolver": "cg"}
         occ_width = min(occupations_width, 0.05)
 
     calc = GPAW(

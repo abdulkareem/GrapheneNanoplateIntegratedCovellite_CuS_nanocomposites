@@ -84,6 +84,8 @@ def detect_failure(stderr: str) -> str:
         return 'optimizer_stop_api'
     if 'unrecognized arguments:' in s:
         return 'cli_args'
+    if 'AssertionError' in s and 'gpaw/eigensolvers' in s:
+        return 'eigensolver_assertion'
     return 'unknown'
 
 
@@ -311,6 +313,10 @@ def main() -> None:
             break
         elif failure == 'cli_args':
             fixes.append("Detected CLI argument parsing failure. Re-run command without escaped '\\n' tokens and pass arguments as normal shell words.")
+            attempts.append(result)
+            break
+        elif failure == 'eigensolver_assertion':
+            fixes.append('Detected GPAW eigensolver assertion (likely unsupported eigensolver/mode pair). Pull latest repo and retry.')
             attempts.append(result)
             break
         else:
