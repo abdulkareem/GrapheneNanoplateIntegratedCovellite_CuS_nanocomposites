@@ -3,7 +3,7 @@
 ## 2-line Colab launcher (auto-runs everything from GitHub)
 ```python
 ![ -d GrapheneNanoplateIntegratedCovellite_CuS_nanocomposites ] || git clone https://github.com/<YOUR_GITHUB_USER>/GrapheneNanoplateIntegratedCovellite_CuS_nanocomposites.git
-!cd GrapheneNanoplateIntegratedCovellite_CuS_nanocomposites && git pull --ff-only || true; pip -q install ase gpaw gpaw-data mpi4py numpy scipy matplotlib && echo "Starting GPAW run (this can take a while on Colab CPU)..." && OMPI_ALLOW_RUN_AS_ROOT=1 OMPI_ALLOW_RUN_AS_ROOT_CONFIRM=1 mpiexec --allow-run-as-root -n 2 gpaw python scripts/run_from_github.py -- --output-dir /content/drive/MyDrive/gpaw_cus_graphene_project/results --profile quick --engine gpaw --adsorbate Pb2+ && echo "Run finished."
+!((cd GrapheneNanoplateIntegratedCovellite_CuS_nanocomposites && git pull --ff-only) || true) && pip -q install ase gpaw gpaw-data mpi4py numpy scipy matplotlib && echo 'Starting GPAW run (this can take a while on Colab CPU)...' && cd GrapheneNanoplateIntegratedCovellite_CuS_nanocomposites && OMPI_ALLOW_RUN_AS_ROOT=1 OMPI_ALLOW_RUN_AS_ROOT_CONFIRM=1 mpiexec --allow-run-as-root -n 2 gpaw python scripts/run_from_github.py -- --output-dir /content/drive/MyDrive/gpaw_cus_graphene_project/results --profile quick --engine gpaw --adsorbate Pb2+ && echo 'Run finished.'
 ```
 
 ## Optional Quantum ESPRESSO backend
