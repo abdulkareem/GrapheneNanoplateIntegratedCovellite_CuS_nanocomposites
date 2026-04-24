@@ -183,7 +183,7 @@ def choose_profile(profile: str) -> Dict[str, object]:
         'optimizer': 'LBFGS',
         'energy_conv': 1e-6,
         'maxstep': 0.05,
-        'scf_stability': 'normal',
+        'scf_stability': 'stable',
     }
 
 

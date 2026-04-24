@@ -139,6 +139,7 @@ By default, the auditor writes diagnostics even if quality checks fail and exits
 Add `--strict-exit` if you want a non-zero exit code on failed quality gates (useful for CI).
 The auditor also auto-detects strong SCF energy oscillations and retries with `--scf-stable`
 (Mixer beta=0.01, `cg` eigensolver, narrower smearing).
+Also, the `quick` profile now defaults to stable SCF settings for metallic LCAO runs.
 
 This writes:
 - `correction_log.txt` (what was changed and why)

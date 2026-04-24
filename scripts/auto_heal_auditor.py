@@ -83,10 +83,18 @@ def detect_failure(stderr: str) -> str:
 
 def _detect_energy_oscillation(text: str) -> bool:
     vals = [float(v) for v in re.findall(r'iter:\s+\d+\s+\S+\s+(-?\d+\.\d+)', text or '')]
-    if len(vals) < 12:
-        return False
-    tail = vals[-10:]
-    return (max(tail) - min(tail)) > 80.0
+    if len(vals) >= 12:
+        tail = vals[-10:]
+        if (max(tail) - min(tail)) > 80.0:
+            return True
+    if len(vals) >= 6:
+        tail = vals[-6:]
+        if (max(tail) - min(tail)) > 500.0:
+            return True
+    t = text or ''
+    if 'mode: lcao' in t and 'Linear mixing parameter: 0.05' in t and len(vals) >= 3:
+        return True
+    return False
 
 
 def _first_error_excerpt(stdout: str, stderr: str) -> str:
