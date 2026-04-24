@@ -310,6 +310,10 @@ def _optimizer_class(name: str):
     raise ValueError(f'Unsupported optimizer: {name}')
 
 
+class _EarlyStopRelax(Exception):
+    """Internal signal used to stop ASE optimizers from monitor callbacks."""
+
+
 def monitored_relax(
     atoms: Atoms,
     calc,
@@ -354,7 +358,7 @@ def monitored_relax(
             if recent_min < 0.08 and cur > 0.15 and cur > 2.5 * recent_min:
                 state['unstable'] = True
                 state['reason'] = 'force_spike_after_near_convergence'
-                opt.stop()
+                raise _EarlyStopRelax(state['reason'])
 
         # Catastrophic divergence guard
         if len(state['fmax']) >= 3:
@@ -362,10 +366,14 @@ def monitored_relax(
             if cur_f > 5.0 or e > (state['best_e'] + 8.0):
                 state['unstable'] = True
                 state['reason'] = 'catastrophic_divergence'
-                opt.stop()
+                raise _EarlyStopRelax(state['reason'])
 
     opt.attach(monitor, interval=1)
-    opt.run(fmax=fmax, steps=steps)
+    try:
+        opt.run(fmax=fmax, steps=steps)
+    except _EarlyStopRelax:
+        # Deliberate early exit from the monitor callback.
+        pass
     return state
 
 
