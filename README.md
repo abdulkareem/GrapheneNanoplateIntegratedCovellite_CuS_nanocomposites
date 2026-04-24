@@ -98,3 +98,48 @@ On Colab, `pip -q` and GPAW often print very little while running. Use these cel
 !tail -n 40 /content/drive/MyDrive/gpaw_cus_graphene_project/results/composite_relax.opt.log
 !ls -lh /content/drive/MyDrive/gpaw_cus_graphene_project/results
 ```
+
+## Auto-healing supervisor (log-driven retries + correction log)
+For automatic retry/correction based on run logs (GridBoundsError, SCF/MPI failures, flat PDOS checks), use:
+```bash
+%%bash
+REPO=/content/GrapheneNanoplateIntegratedCovellite_CuS_nanocomposites
+[ -d "$REPO" ] || git clone https://github.com/<YOUR_GITHUB_USER>/GrapheneNanoplateIntegratedCovellite_CuS_nanocomposites.git "$REPO"
+python "$REPO/scripts/auto_heal_auditor.py" --output-dir /content/drive/MyDrive/gpaw_cus_graphene_project/results --profile quick --engine gpaw
+```
+If you prefer a **Python** cell instead, use:
+```python
+import os, subprocess
+REPO = "/content/GrapheneNanoplateIntegratedCovellite_CuS_nanocomposites"
+if not os.path.isdir(REPO):
+    subprocess.run(["git", "clone", "https://github.com/<YOUR_GITHUB_USER>/GrapheneNanoplateIntegratedCovellite_CuS_nanocomposites.git", REPO], check=True)
+subprocess.run([
+    "python", f"{REPO}/scripts/auto_heal_auditor.py",
+    "--output-dir", "/content/drive/MyDrive/gpaw_cus_graphene_project/results",
+    "--profile", "quick",
+    "--engine", "gpaw",
+], check=True)
+```
+Exact ready-to-run cell for this repository (`abdulkareem/...`):
+```python
+%%bash
+set -euo pipefail
+REPO=/content/GrapheneNanoplateIntegratedCovellite_CuS_nanocomposites
+[ -d "$REPO" ] || git clone https://github.com/abdulkareem/GrapheneNanoplateIntegratedCovellite_CuS_nanocomposites.git "$REPO"
+git -C "$REPO" pull --ff-only
+python -m pip -q install ase gpaw gpaw-data mpi4py numpy scipy matplotlib
+cd "$REPO"
+python scripts/auto_heal_auditor.py --output-dir /content/drive/MyDrive/gpaw_cus_graphene_project/results --profile quick --engine gpaw || true
+tail -n 40 /content/drive/MyDrive/gpaw_cus_graphene_project/results/correction_log.txt || true
+```
+By default, the auditor writes diagnostics even if quality checks fail and exits cleanly so your notebook cell does not crash.  
+Add `--strict-exit` if you want a non-zero exit code on failed quality gates (useful for CI).
+The auditor also auto-detects strong SCF energy oscillations and retries with `--scf-stable`
+(Mixer beta=0.01, `cg` eigensolver, narrower smearing).
+Also, the `quick` profile now defaults to stable SCF settings for metallic LCAO runs.
+
+This writes:
+- `correction_log.txt` (what was changed and why)
+- `auto_heal_history.json` (attempt-by-attempt metadata)
+- `Publication_Ready_Summary.txt` (quality gate summary)
+- per-attempt merged logs (`auto_heal_attempt_*.log`)
