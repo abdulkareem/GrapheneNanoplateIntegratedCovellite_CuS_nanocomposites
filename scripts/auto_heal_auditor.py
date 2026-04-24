@@ -29,6 +29,7 @@ class AttemptResult:
     log_file: str
     pdos_max: float | None = None
     accepted: bool = False
+    failure_excerpt: str = ''
 
 
 def utc_now() -> str:
@@ -60,6 +61,12 @@ def run_attempt(
 
 def detect_failure(stderr: str) -> str:
     s = stderr or ''
+    if 'Google Drive directory does not exist' in s or 'Mount Drive first' in s:
+        return 'gdrive_missing'
+    if "ModuleNotFoundError: No module named 'gpaw'" in s:
+        return 'missing_gpaw'
+    if "ModuleNotFoundError: No module named 'ase'" in s:
+        return 'missing_ase'
     if 'GridBoundsError' in s:
         return 'grid_bounds'
     if 'ConvergenceError' in s or 'Convergence failure' in s:
@@ -69,6 +76,19 @@ def detect_failure(stderr: str) -> str:
     if 'MemoryError' in s or 'Out of memory' in s:
         return 'oom'
     return 'unknown'
+
+
+def _first_error_excerpt(stdout: str, stderr: str) -> str:
+    text = '\n'.join([(stderr or ''), (stdout or '')]).strip()
+    if not text:
+        return ''
+    for line in text.splitlines():
+        ln = line.strip()
+        if not ln:
+            continue
+        if any(k in ln for k in ['Error', 'Exception', 'Traceback', 'ModuleNotFoundError', 'RuntimeError']):
+            return ln[:220]
+    return text.splitlines()[0][:220]
 
 
 def pdos_max_from_csv(output_dir: Path) -> float | None:
@@ -130,6 +150,11 @@ def main() -> None:
     parser.add_argument('--gdrive-dir', type=Path, default=Path('/content/drive/MyDrive/GrapheneCuS_outputs'))
     parser.add_argument('--max-attempts', type=int, default=4)
     parser.add_argument('--pdos-min-peak', type=float, default=1.0e-3)
+    parser.add_argument(
+        '--strict-exit',
+        action='store_true',
+        help='Return non-zero exit code if no quality-accepted run is produced.',
+    )
     args = parser.parse_args()
 
     correction_log = args.output_dir / 'correction_log.txt'
@@ -140,6 +165,7 @@ def main() -> None:
     isolated_vacuum = 6.0
     spacing = float(args.spacing)
     accepted: AttemptResult | None = None
+    enable_gdrive_sync = True
 
     for attempt in range(1, int(args.max_attempts) + 1):
         cmd = [
@@ -159,9 +185,11 @@ def main() -> None:
             args.engine,
             '--isolated-vacuum',
             str(isolated_vacuum),
-            '--gdrive-dir',
-            str(args.gdrive_dir),
         ]
+        if enable_gdrive_sync:
+            cmd += ['--gdrive-dir', str(args.gdrive_dir)]
+        else:
+            cmd += ['--no-gdrive-sync']
         proc, logfile = run_attempt(cmd, args.output_dir, attempt, cwd=REPO_ROOT)
         fixes: list[str] = []
         result = AttemptResult(
@@ -170,6 +198,7 @@ def main() -> None:
             returncode=proc.returncode,
             fixes_applied=fixes,
             log_file=str(logfile),
+            failure_excerpt=_first_error_excerpt(proc.stdout, proc.stderr),
         )
 
         if proc.returncode == 0:
@@ -204,8 +233,17 @@ def main() -> None:
             profile = 'quick'
             spacing = min(spacing + 0.3, 3.2)
             fixes.append(f'Detected {failure}; using quick profile and increased spacing to {spacing:.2f} Å.')
+        elif failure == 'gdrive_missing':
+            enable_gdrive_sync = False
+            fixes.append('Google Drive mount not detected; retrying with --no-gdrive-sync.')
+        elif failure in {'missing_gpaw', 'missing_ase'}:
+            pkg = 'gpaw gpaw-data ase mpi4py numpy scipy matplotlib' if failure == 'missing_gpaw' else 'ase'
+            fixes.append(f'Missing Python package(s) detected; install with: pip install {pkg}')
+            attempts.append(result)
+            break
         else:
-            fixes.append('Unknown failure type; no automatic patch available.')
+            excerpt = result.failure_excerpt or 'no stderr/stdout excerpt captured'
+            fixes.append(f'Unknown failure type; no automatic patch available. First error line: {excerpt}')
             attempts.append(result)
             break
 
@@ -216,7 +254,7 @@ def main() -> None:
         correction_lines.append(
             f'Attempt {a.attempt}: rc={a.returncode}, accepted={a.accepted}, '
             f'pdos_max={a.pdos_max}, fixes={"; ".join(a.fixes_applied) if a.fixes_applied else "none"}, '
-            f'log={a.log_file}'
+            f'log={a.log_file}, excerpt={a.failure_excerpt}'
         )
     correction_lines.append(f'[{utc_now()}] Auto-heal session finished.')
     correction_log.write_text('\n'.join(correction_lines) + '\n', encoding='utf-8')
@@ -224,7 +262,11 @@ def main() -> None:
     write_publication_report(args.output_dir, accepted)
 
     if accepted is None:
-        raise SystemExit('Auto-heal failed to produce a quality-accepted run. See correction_log.txt.')
+        msg = 'Auto-heal did not produce a quality-accepted run. See correction_log.txt and auto_heal_history.json.'
+        if args.strict_exit:
+            raise SystemExit(msg)
+        print(msg)
+        return
 
     print(f'Auto-heal succeeded on attempt {accepted.attempt}.')
 
