@@ -33,6 +33,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 from ase import Atoms
 from ase.io import write
+from ase.io.trajectory import Trajectory
 from ase.optimize import BFGS, FIRE, LBFGS
 from gpaw import GPAW
 
@@ -157,7 +158,7 @@ def choose_profile(profile: str) -> Dict[str, object]:
         'total_vacuum': 15.0,
         'max_cell_z': 40.0,
         'optimizer': 'LBFGS',
-        'energy_conv': 1e-5,
+        'energy_conv': 1e-6,
         'maxstep': 0.05,
     }
 
@@ -367,6 +368,46 @@ def monitored_relax(
     opt.run(fmax=fmax, steps=steps)
     return state
 
+
+def _pick_restart_geometry(traj_path: Path, force_threshold: float = 0.08) -> tuple[Atoms | None, str]:
+    """Pick a stable restart frame from a prior relaxation trajectory.
+
+    Preference order:
+      1) Lowest-force frame with fmax <= force_threshold.
+      2) Otherwise the global lowest-force frame.
+    """
+    if not traj_path.exists():
+        return None, ''
+
+    frames = Trajectory(str(traj_path))
+    if len(frames) == 0:
+        return None, ''
+
+    best_under = None  # (fmax, energy, index, atoms)
+    best_any = None
+    for i, atoms_i in enumerate(frames):
+        try:
+            e = float(atoms_i.get_potential_energy())
+            f = float(np.abs(atoms_i.get_forces()).max())
+        except Exception:
+            continue
+        rec = (f, e, i, atoms_i.copy())
+        if best_any is None or (f, e) < (best_any[0], best_any[1]):
+            best_any = rec
+        if f <= force_threshold and (best_under is None or (f, e) < (best_under[0], best_under[1])):
+            best_under = rec
+
+    chosen = best_under or best_any
+    if chosen is None:
+        return None, ''
+
+    fval, eval_, idx, atoms_out = chosen
+    note = (
+        f"Loaded restart geometry from {traj_path.name} frame {idx} "
+        f"(fmax={fval:.4f} eV/Å, E={eval_:.6f} eV)."
+    )
+    return atoms_out, note
+
 def run(output_dir: Path, graphene_n: int, spacing: float, adsorbate: str, profile: str, engine: str) -> None:
     output_dir.mkdir(parents=True, exist_ok=True)
     _set_pub_plot_style()
@@ -379,6 +420,8 @@ def run(output_dir: Path, graphene_n: int, spacing: float, adsorbate: str, profi
         'kpts': run_cfg['kpts'],
         'ecut': run_cfg['ecut'],
         'mode_type': run_cfg['mode_type'],
+        'energy_conv': run_cfg['energy_conv'],
+        'maxstep': run_cfg['maxstep'],
     }
     (output_dir / 'run_metadata.txt').write_text('\n'.join(f'{k}: {v}' for k, v in metadata.items()) + '\n', encoding='utf-8')
 
@@ -432,6 +475,16 @@ def run(output_dir: Path, graphene_n: int, spacing: float, adsorbate: str, profi
         return
 
     working = composite
+    restart_note = ''
+    for restart_traj in [output_dir / 'composite_relax_restart.traj', output_dir / 'composite_relax.traj']:
+        picked, note = _pick_restart_geometry(restart_traj, force_threshold=max(0.08, float(run_cfg['fmax']) * 2.0))
+        if picked is not None:
+            working = picked
+            restart_note = note
+            break
+    if restart_note:
+        (output_dir / 'restart_seed_note.txt').write_text(restart_note + '\n', encoding='utf-8')
+
     if bool(run_cfg.get('pre_relax_lcao', False)):
         calc_pre = make_gpaw_calculator(
             kpts=run_cfg['kpts'],
