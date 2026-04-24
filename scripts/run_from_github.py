@@ -438,7 +438,15 @@ def _pick_restart_geometry(traj_path: Path, force_threshold: float = 0.08) -> tu
     )
     return atoms_out, note
 
-def run(output_dir: Path, graphene_n: int, spacing: float, adsorbate: str, profile: str, engine: str) -> None:
+def run(
+    output_dir: Path,
+    graphene_n: int,
+    spacing: float,
+    adsorbate: str,
+    profile: str,
+    engine: str,
+    isolated_vacuum: float = 6.0,
+) -> None:
     output_dir.mkdir(parents=True, exist_ok=True)
     _set_pub_plot_style()
     run_cfg = choose_profile(profile)
@@ -597,6 +605,8 @@ def run(output_dir: Path, graphene_n: int, spacing: float, adsorbate: str, profi
     energies_p, pdos_cu_d = compute_pdos(
         calc_loaded, atom_indices=cu_indices, angular='d', npts=int(run_cfg['dos_npts']), width=float(run_cfg['dos_width'])
     )
+    np.savetxt(output_dir / 'dos_total.csv', np.column_stack((energies, dos)), delimiter=',', header='energy_eV,dos', comments='')
+    np.savetxt(output_dir / 'pdos_cu_d.csv', np.column_stack((energies_p, pdos_cu_d)), delimiter=',', header='energy_eV,pdos_cu_d', comments='')
     plot_xy(energies, dos, 'Energy - E_F (eV)', 'DOS (states/eV)', 'Total DOS', str(output_dir / 'dos_total.png'))
     plot_xy(energies_p, pdos_cu_d, 'Energy - E_F (eV)', 'PDOS (states/eV)', 'Cu-d PDOS', str(output_dir / 'pdos_cu_d.png'))
 
@@ -626,7 +636,7 @@ def run(output_dir: Path, graphene_n: int, spacing: float, adsorbate: str, profi
 
     ads_atom = Atoms('Pb' if adsorbate == 'Pb2+' else 'Cd', positions=[(0, 0, 0)], cell=[15, 15, 15], pbc=False)
     # Keep isolated adsorbate safely away from non-periodic cell boundaries.
-    ads_atom.center()
+    ads_atom.center(vacuum=max(0.0, float(isolated_vacuum)))
     calc_adsorbate = make_gpaw_calculator(kpts=(1, 1, 1), ecut=float(run_cfg['ecut']), xc='PBE', txt=str(output_dir / 'adsorbate_sp.log'), mode_type=str(run_cfg['mode_type']), energy_convergence=float(run_cfg['energy_conv']))
     e_adsorbate = single_point_energy(ads_atom, calc_adsorbate, gpw_out=str(output_dir / 'adsorbate.gpw'))
     e_ads = compute_adsorption_energy(e_ads_total, e_comp, e_adsorbate)
@@ -678,6 +688,12 @@ def main() -> None:
     parser.add_argument('--profile', type=str, default='quick', choices=['quick', 'publish'])
     parser.add_argument('--engine', type=str, default='gpaw', choices=['gpaw', 'qe'])
     parser.add_argument(
+        '--isolated-vacuum',
+        type=float,
+        default=6.0,
+        help='Vacuum padding (Å) used when centering isolated adsorbate reference calculations.',
+    )
+    parser.add_argument(
         '--gdrive-dir',
         type=Path,
         default=Path('/content/drive/MyDrive/GrapheneCuS_outputs'),
@@ -697,6 +713,7 @@ def main() -> None:
         adsorbate=args.adsorbate,
         profile=args.profile,
         engine=args.engine,
+        isolated_vacuum=args.isolated_vacuum,
     )
     if not args.no_gdrive_sync:
         drive_path = sync_outputs_to_google_drive(args.output_dir, args.gdrive_dir)
