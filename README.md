@@ -98,3 +98,16 @@ On Colab, `pip -q` and GPAW often print very little while running. Use these cel
 !tail -n 40 /content/drive/MyDrive/gpaw_cus_graphene_project/results/composite_relax.opt.log
 !ls -lh /content/drive/MyDrive/gpaw_cus_graphene_project/results
 ```
+
+## Auto-healing supervisor (log-driven retries + correction log)
+For automatic retry/correction based on run logs (GridBoundsError, SCF/MPI failures, flat PDOS checks), use:
+```python
+REPO=/content/GrapheneNanoplateIntegratedCovellite_CuS_nanocomposites
+![ -d "$REPO" ] || git clone https://github.com/<YOUR_GITHUB_USER>/GrapheneNanoplateIntegratedCovellite_CuS_nanocomposites.git "$REPO"
+!python "$REPO/scripts/auto_heal_auditor.py" --output-dir /content/drive/MyDrive/gpaw_cus_graphene_project/results --profile quick --engine gpaw
+```
+This writes:
+- `correction_log.txt` (what was changed and why)
+- `auto_heal_history.json` (attempt-by-attempt metadata)
+- `Publication_Ready_Summary.txt` (quality gate summary)
+- per-attempt merged logs (`auto_heal_attempt_*.log`)
