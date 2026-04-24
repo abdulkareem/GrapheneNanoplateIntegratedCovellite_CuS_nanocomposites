@@ -150,6 +150,7 @@ def make_gpaw_calculator(
     mode_parallel: bool = False,
     mode_type: str = "pw",
     basis: str = "dzp",
+    energy_convergence: float = 1e-5,
 ) -> GPAW:
     """Construct CPU-friendly GPAW calculator for Colab.
 
@@ -172,7 +173,7 @@ def make_gpaw_calculator(
         xc=xc,
         kpts=kpts,
         occupations=FermiDirac(occupations_width),
-        convergence={"energy": 1e-5},
+        convergence={"energy": energy_convergence},
         txt=txt,
         parallel={"domain": 1, "band": 1} if mode_parallel else {},
         **mode_kw,

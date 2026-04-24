@@ -3,7 +3,7 @@
 ## 2-line Colab launcher (auto-runs everything from GitHub)
 ```python
 ![ -d GrapheneNanoplateIntegratedCovellite_CuS_nanocomposites ] || git clone https://github.com/<YOUR_GITHUB_USER>/GrapheneNanoplateIntegratedCovellite_CuS_nanocomposites.git
-!cd GrapheneNanoplateIntegratedCovellite_CuS_nanocomposites && git pull --ff-only || true; pip -q install ase gpaw gpaw-data mpi4py numpy scipy matplotlib && OMPI_ALLOW_RUN_AS_ROOT=1 OMPI_ALLOW_RUN_AS_ROOT_CONFIRM=1 mpiexec --allow-run-as-root -n 2 gpaw python scripts/run_from_github.py -- --output-dir /content/drive/MyDrive/gpaw_cus_graphene_project/results --profile quick --engine gpaw --adsorbate Pb2+
+!cd GrapheneNanoplateIntegratedCovellite_CuS_nanocomposites && git pull --ff-only || true; pip -q install ase gpaw gpaw-data mpi4py numpy scipy matplotlib && echo "Starting GPAW run (this can take a while on Colab CPU)..." && OMPI_ALLOW_RUN_AS_ROOT=1 OMPI_ALLOW_RUN_AS_ROOT_CONFIRM=1 mpiexec --allow-run-as-root -n 2 gpaw python scripts/run_from_github.py -- --output-dir /content/drive/MyDrive/gpaw_cus_graphene_project/results --profile quick --engine gpaw --adsorbate Pb2+ && echo "Run finished."
 ```
 
 ## Optional Quantum ESPRESSO backend
@@ -47,6 +47,7 @@ The runner now auto-selects a compatible graphene/CuS supercell to avoid lattice
 - `--profile quick` now uses **LCAO mode** for faster relaxations on Colab CPU.
 - `--profile publish` keeps PW accuracy, but uses an **LCAO pre-relax** before PW refinement.
 - Vacuum is reduced for quick profile to shrink FFT workload, and the runner now enforces compact z-cells and logs thickness/vacuum in `lattice_mismatch.txt`.
+- Geometry relaxation includes an instability watchdog: if force spikes are detected, it auto-restarts from the best geometry with tighter SCF and FIRE (`optimizer_restart_note.txt`).
 
 ## Vacuum sanity check (optional)
 If you want to verify your final z-height quickly:
@@ -89,3 +90,11 @@ Colab runs as root, so MPI needs explicit root flags. The launcher already inclu
 - `--` before script arguments so GPAW forwards them to your Python script
 
 If you see `gpaw: error: unrecognized arguments: --output-dir ...`, it means the `--` separator is missing.
+
+## If output appears to stop after clone/pull
+On Colab, `pip -q` and GPAW often print very little while running. Use these cells to monitor progress:
+```python
+!tail -n 40 /content/drive/MyDrive/gpaw_cus_graphene_project/results/relax.log
+!tail -n 40 /content/drive/MyDrive/gpaw_cus_graphene_project/results/composite_relax.opt.log
+!ls -lh /content/drive/MyDrive/gpaw_cus_graphene_project/results
+```

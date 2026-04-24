@@ -30,8 +30,10 @@ if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
 import matplotlib.pyplot as plt
+import numpy as np
 from ase import Atoms
 from ase.io import write
+from ase.optimize import BFGS, FIRE, LBFGS
 from gpaw import GPAW
 
 try:
@@ -137,6 +139,8 @@ def choose_profile(profile: str) -> Dict[str, object]:
             'layers': 3,
             'total_vacuum': 20.0,
             'max_cell_z': 60.0,
+            'optimizer': 'LBFGS',
+            'energy_conv': 1e-6,
         }
     return {
         'kpts': (3, 3, 1),
@@ -151,6 +155,8 @@ def choose_profile(profile: str) -> Dict[str, object]:
         'layers': 2,
         'total_vacuum': 15.0,
         'max_cell_z': 40.0,
+        'optimizer': 'LBFGS',
+        'energy_conv': 1e-5,
     }
 
 
@@ -289,6 +295,54 @@ def _enforce_total_vacuum(atoms: Atoms, total_vacuum: float = 15.0, max_cell_z: 
     atoms.center(axis=2)
     return {'thickness': thickness, 'cell_z': float(atoms.cell[2, 2]), 'total_vacuum': float(atoms.cell[2, 2] - thickness)}
 
+
+def _optimizer_class(name: str):
+    n = name.lower()
+    if n == 'bfgs':
+        return BFGS
+    if n == 'lbfgs':
+        return LBFGS
+    if n == 'fire':
+        return FIRE
+    raise ValueError(f'Unsupported optimizer: {name}')
+
+
+def monitored_relax(
+    atoms: Atoms,
+    calc,
+    traj_path: Path,
+    fmax: float,
+    steps: int,
+    optimizer_name: str = 'LBFGS',
+):
+    """Relax with instability detection and best-geometry capture."""
+    atoms = atoms.copy()
+    atoms.calc = calc
+    opt_cls = _optimizer_class(optimizer_name)
+    opt = opt_cls(atoms, trajectory=str(traj_path), logfile=str(traj_path).replace('.traj', '.opt.log'))
+
+    state = {'energies': [], 'fmax': [], 'best_e': float('inf'), 'best_atoms': atoms.copy(), 'unstable': False}
+
+    def monitor():
+        e = atoms.get_potential_energy()
+        fm = float(np.abs(atoms.get_forces()).max())
+        state['energies'].append(e)
+        state['fmax'].append(fm)
+        if e < state['best_e']:
+            state['best_e'] = e
+            state['best_atoms'] = atoms.copy()
+
+        if len(state['fmax']) >= 6:
+            recent_min = min(state['fmax'][:-1])
+            cur = state['fmax'][-1]
+            if recent_min < 0.08 and cur > 0.15 and cur > 2.5 * recent_min:
+                state['unstable'] = True
+                opt.stop()
+
+    opt.attach(monitor, interval=1)
+    opt.run(fmax=fmax, steps=steps)
+    return state
+
 def run(output_dir: Path, graphene_n: int, spacing: float, adsorbate: str, profile: str, engine: str) -> None:
     output_dir.mkdir(parents=True, exist_ok=True)
     _set_pub_plot_style()
@@ -362,6 +416,7 @@ def run(output_dir: Path, graphene_n: int, spacing: float, adsorbate: str, profi
             txt=str(output_dir / 'pre_relax_lcao.log'),
             mode_type='lcao',
             basis='dzp',
+            energy_convergence=float(run_cfg['energy_conv']),
         )
         working, _ = relax_structure(
             working,
@@ -377,18 +432,46 @@ def run(output_dir: Path, graphene_n: int, spacing: float, adsorbate: str, profi
         xc='PBE',
         txt=str(output_dir / 'relax.log'),
         mode_type=str(run_cfg['mode_type']),
+        energy_convergence=float(run_cfg['energy_conv']),
     )
-    composite_relaxed, e_comp = relax_structure(
+    relax_state = monitored_relax(
         working,
         calc_relax,
-        traj_path=str(output_dir / 'composite_relax.traj'),
+        traj_path=output_dir / 'composite_relax.traj',
         fmax=float(run_cfg['fmax']),
         steps=int(run_cfg['steps']),
+        optimizer_name=str(run_cfg['optimizer']),
     )
+    if relax_state['unstable']:
+        (output_dir / 'optimizer_restart_note.txt').write_text(
+            'Instability detected in primary relax; restarting from best geometry with FIRE and tighter SCF.\\n',
+            encoding='utf-8',
+        )
+        restart_calc = make_gpaw_calculator(
+            kpts=run_cfg['kpts'],
+            ecut=float(run_cfg['ecut']),
+            xc='PBE',
+            txt=str(output_dir / 'relax_restart.log'),
+            mode_type=str(run_cfg['mode_type']),
+            energy_convergence=min(float(run_cfg['energy_conv']), 1e-6),
+        )
+        relax_state = monitored_relax(
+            relax_state['best_atoms'],
+            restart_calc,
+            traj_path=output_dir / 'composite_relax_restart.traj',
+            fmax=min(0.02, float(run_cfg['fmax'])),
+            steps=max(80, int(run_cfg['steps']) // 2),
+            optimizer_name='FIRE',
+        )
+        calc_relax = restart_calc
+
+    composite_relaxed = relax_state['best_atoms'].copy()
+    composite_relaxed.calc = calc_relax
+    e_comp = composite_relaxed.get_potential_energy()
     calc_relax.write(str(output_dir / 'composite_relaxed.gpw'), mode='all')
 
-    calc_g = make_gpaw_calculator(kpts=run_cfg['kpts'], ecut=float(run_cfg['ecut']), xc='PBE', txt=str(output_dir / 'graphene_sp.log'), mode_type=str(run_cfg['mode_type']))
-    calc_c = make_gpaw_calculator(kpts=run_cfg['kpts'], ecut=float(run_cfg['ecut']), xc='PBE', txt=str(output_dir / 'cus_sp.log'), mode_type=str(run_cfg['mode_type']))
+    calc_g = make_gpaw_calculator(kpts=run_cfg['kpts'], ecut=float(run_cfg['ecut']), xc='PBE', txt=str(output_dir / 'graphene_sp.log'), mode_type=str(run_cfg['mode_type']), energy_convergence=float(run_cfg['energy_conv']))
+    calc_c = make_gpaw_calculator(kpts=run_cfg['kpts'], ecut=float(run_cfg['ecut']), xc='PBE', txt=str(output_dir / 'cus_sp.log'), mode_type=str(run_cfg['mode_type']), energy_convergence=float(run_cfg['energy_conv']))
     e_graphene = single_point_energy(graphene, calc_g, gpw_out=str(output_dir / 'graphene.gpw'))
     e_cus = single_point_energy(cus_slab, calc_c, gpw_out=str(output_dir / 'cus.gpw'))
     e_bind = compute_binding_energy(e_comp, e_graphene, e_cus)
@@ -412,17 +495,21 @@ def run(output_dir: Path, graphene_n: int, spacing: float, adsorbate: str, profi
         bs.plot(filename=str(output_dir / 'band_structure.png'), show=False, emin=-6, emax=4)
 
     ads_system = add_adsorbate_to_composite(composite_relaxed, adsorbate=adsorbate, height=2.4)
-    calc_ads = make_gpaw_calculator(kpts=run_cfg['kpts'], ecut=float(run_cfg['ecut']), xc='PBE', txt=str(output_dir / 'ads_relax.log'), mode_type=str(run_cfg['mode_type']))
-    ads_relaxed, e_ads_total = relax_structure(
+    calc_ads = make_gpaw_calculator(kpts=run_cfg['kpts'], ecut=float(run_cfg['ecut']), xc='PBE', txt=str(output_dir / 'ads_relax.log'), mode_type=str(run_cfg['mode_type']), energy_convergence=float(run_cfg['energy_conv']))
+    ads_state = monitored_relax(
         ads_system,
         calc_ads,
-        traj_path=str(output_dir / 'adsorption_relax.traj'),
+        traj_path=output_dir / 'adsorption_relax.traj',
         fmax=float(run_cfg['fmax']),
-        steps=max(160, int(run_cfg['steps']) - 20),
+        steps=max(120, int(run_cfg['steps']) - 20),
+        optimizer_name='LBFGS',
     )
+    ads_relaxed = ads_state['best_atoms'].copy()
+    ads_relaxed.calc = calc_ads
+    e_ads_total = ads_relaxed.get_potential_energy()
 
     ads_atom = Atoms('Pb' if adsorbate == 'Pb2+' else 'Cd', positions=[(0, 0, 0)], cell=[15, 15, 15], pbc=False)
-    calc_adsorbate = make_gpaw_calculator(kpts=(1, 1, 1), ecut=float(run_cfg['ecut']), xc='PBE', txt=str(output_dir / 'adsorbate_sp.log'), mode_type=str(run_cfg['mode_type']))
+    calc_adsorbate = make_gpaw_calculator(kpts=(1, 1, 1), ecut=float(run_cfg['ecut']), xc='PBE', txt=str(output_dir / 'adsorbate_sp.log'), mode_type=str(run_cfg['mode_type']), energy_convergence=float(run_cfg['energy_conv']))
     e_adsorbate = single_point_energy(ads_atom, calc_adsorbate, gpw_out=str(output_dir / 'adsorbate.gpw'))
     e_ads = compute_adsorption_energy(e_ads_total, e_comp, e_adsorbate)
 
